@@ -11,6 +11,7 @@ import { CONTACT_TEST_CHATS, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 
+const daemonEntry = process.env.OMAIMSG_DAEMON_ENTRY || 'daemon/index.js'
 const PORT = 39000 + (process.pid % 500)
 const PASSWORD = 'testpass'
 const configPath = path.join(os.tmpdir(), `omaimsg-smoke-config-${process.pid}.json`)
@@ -203,7 +204,7 @@ async function main() {
   }))
 
   trackSpawn(
-    spawn('node', ['daemon/index.js'], {
+    spawn('node', [daemonEntry], {
       cwd: repoRoot,
       // A page size (3) far smaller than the 7 canned chats forces every
       // `chats` command through the daemon's multi-page fetch for the whole

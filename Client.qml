@@ -287,7 +287,7 @@ Item {
 
   Process {
     id: fallbackStarter
-    command: ["setsid", "node", root.pluginDir + "/../daemon/index.js"]
+    command: ["setsid", "node", root.pluginDir + "/daemon/dist/omaimsg-daemon.cjs"]
   }
 
   // Always arm the loop: it stops itself as soon as the link is confirmed up.

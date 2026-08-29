@@ -1,6 +1,6 @@
 # Omaimsg
 
-iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`plugin/`) backed by a Node daemon (`daemon/`) that talks to a BlueBubbles server on a Mac. Read `README.md` for what it is and how to run it; this file is working knowledge for making changes.
+iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml`, at the repo root) backed by a Node daemon (`daemon/`) that talks to a BlueBubbles server on a Mac. Read `README.md` for what it is and how to run it; this file is working knowledge for making changes.
 
 ## Architecture and contracts
 
@@ -11,11 +11,11 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`plugin/`) backed
 
 ## Verification
 
-`node mock/smoke.js` is the check for any daemon or protocol change: it boots the mock BlueBubbles server (`mock/server.js`) plus the daemon and drives every protocol frame over the real Unix socket. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). QML changes: `/usr/lib/qt6/bin/qmllint` (the bare `qmllint` on PATH is Qt5's and rejects valid QML6); import warnings about `qs.Ui`/`Quickshell` are expected outside the shell tree.
+`node mock/smoke.js` is the check for any daemon or protocol change: it boots the mock BlueBubbles server (`mock/server.js`) plus the daemon and drives every protocol frame over the real Unix socket. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). A daemon change also needs `npm run bundle` re-run and the resulting `daemon/dist/omaimsg-daemon.cjs` committed — it's the daemon installed plugins actually run, so `OMAIMSG_DAEMON_ENTRY=daemon/dist/omaimsg-daemon.cjs node mock/smoke.js` should stay green too. QML changes: `/usr/lib/qt6/bin/qmllint` (the bare `qmllint` on PATH is Qt5's and rejects valid QML6); import warnings about `qs.Ui`/`Quickshell` are expected outside the shell tree. `omarchy plugin validate .` at the repo root checks the manifest and plugin folder the way `omarchy plugin add` would see them (run with no `node_modules` present — a real git clone never has one, and its npm-workspace symlinks otherwise trip the validator's no-symlinks check).
 
 ## Omarchy dev loop
 
-- Install is a real copy: `cp -r plugin/. ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it).
+- Install is a real copy: `rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it).
 - Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate.
 - `omarchy-shell io.omaimsg toggle|open|close` drives the panel from scripts/keybindings (requires `OMARCHY_PATH=/usr/share/omarchy`).
 - Templates this code follows: Omarchy first-party plugins (`/usr/share/omarchy/shell/plugins/`, especially clipboard and agents) and `srineshr1/omarchy-whatsapp` for the daemon/socket architecture. `docs/research/` has the full background.

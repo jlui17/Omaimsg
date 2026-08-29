@@ -6,9 +6,17 @@ Prototype code answering one question: is a keyboard-driven iMessage popup in th
 
 ## Layout
 
+- `manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml` — the Omarchy shell plugin, at the repo root (required by `omarchy plugin add`, which clones the repo straight into the plugins dir).
 - `daemon/` — Node daemon. Speaks REST + Socket.IO to BlueBubbles, serves NDJSON over a Unix socket (`$XDG_RUNTIME_DIR/omaimsg.sock`) to the plugin. One daemon, many plugin clients (one per monitor).
-- `plugin/` — the Omarchy shell plugin (`manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml`).
 - `mock/` — fake BlueBubbles server with canned chats for development, plus `smoke.js`, an end-to-end test of the daemon over the real Unix socket.
+
+## Install
+
+```sh
+omarchy plugin add https://github.com/jlui17/Omaimsg.git --enable
+```
+
+To remove it: `omarchy plugin remove io.omaimsg`.
 
 ## Run against the mock
 
@@ -16,7 +24,7 @@ Prototype code answering one question: is a keyboard-driven iMessage popup in th
 npm install
 node mock/server.js                # fake BlueBubbles on :3010
 OMAIMSG_CONFIG=mock/config.json node daemon/index.js
-cp -r plugin ~/.config/omarchy/plugins/io.omaimsg
+rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/
 omarchy plugin enable io.omaimsg   # widget lands in the bar's right section
 ```
 
@@ -32,7 +40,9 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 { "serverUrl": "http://<mac-ip>:1234", "password": "<bluebubbles server password>" }
 ```
 
-Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else `setsid node daemon/index.js`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
+Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
+
+The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `npm run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `npm run bundle` and commit the result in the same round.
 
 ## POC scope
 
