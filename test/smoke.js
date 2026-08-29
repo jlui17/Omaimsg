@@ -419,6 +419,11 @@ async function main() {
   report('send -> echoed message pushed', !!echoFrame)
   report('echoed message carries matching tempId', echoFrame.message.tempId === tempId, JSON.stringify(echoFrame.message))
 
+  const duplicateEcho = await client
+    .waitFor((f) => f.t === 'message' && f.message.guid === echoFrame.message.guid, 1000)
+    .catch(() => null)
+  report('second echo of the same guid is dropped', duplicateEcho === null, JSON.stringify(duplicateEcho))
+
   const replyFrame = await client.waitFor(
     (f) => f.t === 'message' && f.chatGuid === chatGuid && f.message.fromMe === false,
     6000

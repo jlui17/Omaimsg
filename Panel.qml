@@ -291,7 +291,11 @@ Panel {
     target: root.client
     enabled: root.client !== null
 
-    function onActiveMessagesAppended() {
+    // A JS-array model is reset wholesale on every reassignment, losing the
+    // scroll position, and a send reassigns three times (optimistic row, ack
+    // patch, echo). Re-pin to the newest message on the property's own change
+    // signal so no write path can forget to.
+    function onActiveMessagesChanged() {
       if (root.messageIndex >= 0) return
       Qt.callLater(function () { messageList.positionViewAtEnd() })
     }

@@ -138,8 +138,11 @@ const server = createServer(async (req, res) => {
 
       // Echo over the socket like the real server's emitMessageMatch (which
       // stamps tempGuid on the emitted copy, not the HTTP response), then a
-      // canned reply a few seconds later so the round trip is visible.
+      // canned reply a few seconds later so the round trip is visible. The
+      // real server emits the echo twice for one send, same guid, only the
+      // first copy carrying tempGuid.
       io.emit('new-message', { ...sent, tempGuid })
+      io.emit('new-message', sent)
       scheduleReply(chatGuid)
       return
     }

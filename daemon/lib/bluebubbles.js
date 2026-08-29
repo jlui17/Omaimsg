@@ -60,6 +60,10 @@ const CHAT_FETCH_CAP = 2000
 // the panel ever grows a full-size image viewer, which should fetch the
 // original instead.
 const ATTACHMENT_IMAGE_WIDTH = 1024
+// Guids remembered for the duplicate-echo drop. Large enough that the two
+// copies of one send can never be separated by that many other messages;
+// small enough that a long-lived daemon's set stays trivial.
+const SEEN_MESSAGE_GUIDS = 500
 
 // Both transports plus the contact index behind one interface: callers get
 // protocol-shaped Chat/Message objects and a connection state, never a
@@ -72,6 +76,7 @@ export class BlueBubblesSession {
     this.socket = null
     this.onConnection = () => {}
     this.onMessage = () => {}
+    this.seenMessageGuids = new Set()
   }
 
   start() {
@@ -112,12 +117,29 @@ export class BlueBubblesSession {
         logger.warn('bluebubbles: new-message with no embedded chat, dropping')
         return
       }
+      if (this._alreadySeen(payload.guid)) {
+        logger.debug('bluebubbles: duplicate new-message dropped', { guid: payload.guid })
+        return
+      }
       this.onMessage({
         chatGuid: bbChat.guid,
         chat: normalizeChat(bbChat, this.contacts),
         message: normalizeMessage(payload, this.contacts)
       })
     })
+  }
+
+  // An outbound send arrives as two "new-message" events with one guid: the
+  // first stamped with tempGuid, the second bare (verified against a real
+  // server). Forwarding both shows the text twice in the panel and would
+  // double-count unread, so the first copy wins and later ones are dropped.
+  _alreadySeen(guid) {
+    if (!guid) return false
+    if (this.seenMessageGuids.has(guid)) return true
+    this.seenMessageGuids.add(guid)
+    while (this.seenMessageGuids.size > SEEN_MESSAGE_GUIDS)
+      this.seenMessageGuids.delete(this.seenMessageGuids.values().next().value)
+    return false
   }
 
   close() {

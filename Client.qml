@@ -54,7 +54,6 @@ Item {
 
   // Emitted whenever rows land at the end of activeMessages: a freshly loaded
   // page, an inbound message, an optimistic send.
-  signal activeMessagesAppended()
   signal messageArrived(string chatGuid, var message, var chat)
   signal sendFailed(string message)
   signal commandFailed(string command, string message)
@@ -168,7 +167,6 @@ Item {
     var list = root.activeMessages.slice()
     list.push(message)
     root.activeMessages = list
-    root.activeMessagesAppended()
   }
 
   function patchActiveMessage(guid, fields) {
@@ -310,7 +308,6 @@ Item {
       case "messages":
         if ((frame.chatGuid || "") === root.activeChatGuid) {
           root.activeMessages = frame.messages || []
-          root.activeMessagesAppended()
         }
         break
 

@@ -7112,6 +7112,7 @@ var EMPTY_CONTACT_INDEX = new ContactIndex([]);
 var CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200;
 var CHAT_FETCH_CAP = 2000;
 var ATTACHMENT_IMAGE_WIDTH = 1024;
+var SEEN_MESSAGE_GUIDS = 500;
 
 class BlueBubblesSession {
   constructor(config) {
@@ -7121,6 +7122,7 @@ class BlueBubblesSession {
     this.socket = null;
     this.onConnection = () => {};
     this.onMessage = () => {};
+    this.seenMessageGuids = new Set;
   }
   start() {
     this.socket = lookup(this.config.serverUrl, {
@@ -7151,12 +7153,26 @@ class BlueBubblesSession {
         logger.warn("bluebubbles: new-message with no embedded chat, dropping");
         return;
       }
+      if (this._alreadySeen(payload.guid)) {
+        logger.debug("bluebubbles: duplicate new-message dropped", { guid: payload.guid });
+        return;
+      }
       this.onMessage({
         chatGuid: bbChat.guid,
         chat: normalizeChat(bbChat, this.contacts),
         message: normalizeMessage(payload, this.contacts)
       });
     });
+  }
+  _alreadySeen(guid) {
+    if (!guid)
+      return false;
+    if (this.seenMessageGuids.has(guid))
+      return true;
+    this.seenMessageGuids.add(guid);
+    while (this.seenMessageGuids.size > SEEN_MESSAGE_GUIDS)
+      this.seenMessageGuids.delete(this.seenMessageGuids.values().next().value);
+    return false;
   }
   close() {
     this.socket?.close();
