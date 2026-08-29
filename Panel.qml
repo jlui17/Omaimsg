@@ -140,6 +140,48 @@ Panel {
     return list[index]
   }
 
+  // Flat roles only: everything the row renders is resolved here, so a delegate
+  // never reaches back into the chat object and `lastMessage` never has to
+  // survive as a nested model value.
+  function chatRow(chat) {
+    return {
+      guid: chat.guid || "",
+      label: chat.name || chat.guid || "",
+      preview: root.chatPreview(chat),
+      ts: chat.lastMessage ? (chat.lastMessage.ts || 0) : 0,
+      unread: chat.unread || 0,
+      pinned: chat.pinned === true
+    }
+  }
+
+  // Reconcile by guid rather than reassigning the model. Assigning a fresh list
+  // makes ListView destroy and rebuild every delegate, which is what made the
+  // whole list blink on each refresh even when nothing had changed; patching in
+  // place also leaves a reordered row as the same item, so it can be animated.
+  function syncChatModel() {
+    var desired = root.visibleChats
+    var wanted = {}
+    for (var i = 0; i < desired.length; i++) wanted[desired[i].guid] = true
+    for (var stale = chatModel.count - 1; stale >= 0; stale--) {
+      if (!wanted[chatModel.get(stale).guid]) chatModel.remove(stale)
+    }
+    for (var target = 0; target < desired.length; target++) {
+      var row = root.chatRow(desired[target])
+      var found = -1
+      for (var scan = target; scan < chatModel.count; scan++) {
+        if (chatModel.get(scan).guid !== row.guid) continue
+        found = scan
+        break
+      }
+      if (found === -1) {
+        chatModel.insert(target, row)
+        continue
+      }
+      if (found !== target) chatModel.move(found, target, 1)
+      chatModel.set(target, row)
+    }
+  }
+
   function moveCursor(delta) {
     var count = root.visibleChats.length
     if (count === 0) return
@@ -240,6 +282,7 @@ Panel {
   }
 
   onVisibleChatsChanged: {
+    root.syncChatModel()
     if (!root.cursorFollowGuid.length) return
     root.cursorToGuid(root.cursorFollowGuid)
     root.cursorFollowGuid = ""
@@ -507,7 +550,7 @@ Panel {
             width: parent.width
             visible: root.visibleChats.length > 0
             height: Math.min(contentHeight, Style.space(320))
-            model: root.visibleChats
+            model: chatModel
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentHeight > height
@@ -515,10 +558,19 @@ Panel {
             spacing: Style.space(1)
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
+            ListModel {
+              id: chatModel
+              Component.onCompleted: root.syncChatModel()
+            }
+
             delegate: CursorSurface {
               id: chatRow
-              required property var modelData
               required property int index
+              required property string label
+              required property string preview
+              required property double ts
+              required property int unread
+              required property bool pinned
 
               width: ListView.view.width
               implicitHeight: rowText.implicitHeight + Style.space(10)
@@ -538,17 +590,17 @@ Panel {
 
                 Text {
                   width: parent.width
-                  text: chatRow.modelData.name || chatRow.modelData.guid
+                  text: chatRow.label
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
-                  font.bold: (chatRow.modelData.unread || 0) > 0
+                  font.bold: chatRow.unread > 0
                   elide: Text.ElideRight
                 }
 
                 Text {
                   width: parent.width
-                  text: root.chatPreview(chatRow.modelData)
+                  text: chatRow.preview
                   color: root.secondaryForeground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -560,7 +612,7 @@ Panel {
                 id: pinMark
                 // nf-md-pin
                 text: "󰐃"
-                visible: chatRow.modelData.pinned === true
+                visible: chatRow.pinned
                 width: visible ? implicitWidth : 0
                 anchors.right: rowMeta.left
                 anchors.rightMargin: visible ? Style.space(6) : 0
@@ -581,9 +633,7 @@ Panel {
                 Text {
                   id: stamp
                   anchors.right: parent.right
-                  text: chatRow.modelData.lastMessage
-                    ? root.relativeTime(chatRow.modelData.lastMessage.ts)
-                    : ""
+                  text: root.relativeTime(chatRow.ts)
                   color: root.secondaryForeground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -592,7 +642,7 @@ Panel {
                 Rectangle {
                   id: badge
                   anchors.right: parent.right
-                  visible: (chatRow.modelData.unread || 0) > 0
+                  visible: chatRow.unread > 0
                   implicitWidth: badgeLabel.implicitWidth + Style.space(8)
                   implicitHeight: badgeLabel.implicitHeight + Style.space(2)
                   width: implicitWidth
@@ -603,7 +653,7 @@ Panel {
                   Text {
                     id: badgeLabel
                     anchors.centerIn: parent
-                    text: root.badgeText(chatRow.modelData.unread)
+                    text: root.badgeText(chatRow.unread)
                     color: Color.background
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -617,7 +667,7 @@ Panel {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onContainsMouseChanged: if (containsMouse) root.cursorIndex = chatRow.index
-                onClicked: root.openThread(chatRow.modelData)
+                onClicked: root.openThread(root.chatAt(chatRow.index))
               }
             }
           }
