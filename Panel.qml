@@ -22,7 +22,7 @@ Panel {
   property string cursorFollowGuid: ""
   property string statusLine: ""
   property bool searching: false
-  // "search" | "chats"
+  // "search" | "chats" | "messages" | "composer"
   property string focusSection: "chats"
   property string filterText: ""
 
@@ -116,6 +116,15 @@ Panel {
     return n > 99 ? "99+" : String(n)
   }
 
+  function cursorToGuid(guid) {
+    for (var i = 0; i < root.visibleChats.length; i++) {
+      if (root.visibleChats[i].guid !== guid) continue
+      root.cursorIndex = i
+      chatList.positionViewAtIndex(i, ListView.Contain)
+      return
+    }
+  }
+
   function chatAt(index) {
     var list = root.visibleChats
     if (index < 0 || index >= list.length) return null
@@ -135,11 +144,12 @@ Panel {
     root.activeChat = chat
     root.statusLine = ""
     root.view = "thread"
+    root.focusSection = "messages"
     if (root.client) {
       root.client.openChat(chat.guid, root.messageLimit)
       root.client.markRead(chat.guid)
     }
-    Qt.callLater(function () { composer.forceActiveFocus() })
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   function activateCursor() {
@@ -194,21 +204,26 @@ Panel {
 
   onVisibleChatsChanged: {
     if (!root.cursorFollowGuid.length) return
-    for (var i = 0; i < root.visibleChats.length; i++) {
-      if (root.visibleChats[i].guid !== root.cursorFollowGuid) continue
-      root.cursorIndex = i
-      chatList.positionViewAtIndex(i, ListView.Contain)
-      break
-    }
+    root.cursorToGuid(root.cursorFollowGuid)
     root.cursorFollowGuid = ""
   }
 
+  function focusComposer() {
+    root.focusSection = "composer"
+    composer.forceActiveFocus()
+  }
+
+  // The list reorders while a thread is open (reading it clears the unread,
+  // sending bumps it), so return to the chat itself rather than its old row.
   function backToChats() {
+    var guid = root.activeChat ? root.activeChat.guid : ""
     root.view = "chats"
+    root.focusSection = "chats"
     root.activeChat = null
     root.statusLine = ""
     composer.text = ""
     if (root.client) root.client.closeChat()
+    if (guid.length) root.cursorToGuid(guid)
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
@@ -231,7 +246,8 @@ Panel {
     if (root.view !== "thread" || !root.activeGuid) return
     root.client.reloadActiveMessages(root.messageLimit)
     root.client.markRead(root.activeGuid)
-    Qt.callLater(function () { composer.forceActiveFocus() })
+    root.focusSection = "messages"
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   Connections {
@@ -283,8 +299,16 @@ Panel {
         else if (root.searching) root.exitSearch()
         else root.close()
       }
+      // `l` and `h` are the depth axis: deeper into a thread, back out of it.
       onMoveRequested: function (dx, dy) {
-        if (root.view !== "chats") return
+        if (root.view === "thread") {
+          if (dx < 0) root.backToChats()
+          return
+        }
+        if (dx > 0) {
+          root.activateCursor()
+          return
+        }
         if (dx < 0) {
           if (root.searching) root.exitSearch()
           return
@@ -293,11 +317,13 @@ Panel {
       }
       onActivateRequested: {
         if (root.view === "chats") root.activateCursor()
-        else composer.forceActiveFocus()
       }
       onTabRequested: function (direction) { root.switchPanel(direction) }
       onTextKey: function (text) {
-        if (root.view !== "chats") return
+        if (root.view === "thread") {
+          if (text === "i") root.focusComposer()
+          return
+        }
         if (text === "p") root.togglePin(root.chatAt(root.cursorIndex))
         else if (text === "/") root.beginSearch()
       }
@@ -308,13 +334,33 @@ Panel {
         spacing: Style.space(8)
 
         // ── Header ───────────────────────────────────────────────────────
-        Item {
+        Row {
+          id: header
           width: parent.width
-          implicitHeight: headerText.implicitHeight
+          spacing: Style.space(6)
+
+          Text {
+            id: backArrow
+            visible: root.view === "thread"
+            // nf-md-arrow_left
+            text: "󰁍"
+            color: backArea.containsMouse ? root.foreground : root.secondaryForeground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.subtitle
+
+            MouseArea {
+              id: backArea
+              anchors.fill: parent
+              anchors.margins: -Style.space(4)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.backToChats()
+            }
+          }
 
           Column {
             id: headerText
-            width: parent.width
+            width: header.width - (backArrow.visible ? backArrow.width + header.spacing : 0)
             spacing: Style.space(1)
 
             Text {
@@ -708,6 +754,7 @@ Panel {
             enabled: root.connected
             onAccepted: root.send()
             Keys.onEscapePressed: function (event) {
+              root.focusSection = "messages"
               keyCatcher.forceActiveFocus()
               event.accepted = true
             }
