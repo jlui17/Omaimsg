@@ -1,24 +1,18 @@
 import { normalizeChat } from './bluebubbles.js'
 import { EMPTY_CONTACT_INDEX } from './contacts.js'
+import { PinStore } from './pins.js'
 
 // Daemon-owned chat cache and unread counts. Unread is in-memory only, per
 // the protocol doc: +1 per inbound message to a chat not marked read since,
-// cleared by `read`. It resets on daemon restart.
+// cleared by `read`. It resets on daemon restart; pins do not.
 export class Store {
   constructor() {
     this.chats = new Map()
-    this.pinnedGuids = new Set()
-  }
-
-  // Seeds pinned state from PinStore at startup; pins toggled after that go
-  // through setPinned, which keeps this set and every cached chat in sync.
-  setPinnedGuids(guids) {
-    this.pinnedGuids = new Set(guids)
+    this.pins = new PinStore()
   }
 
   setPinned(chatGuid, pinned) {
-    if (pinned) this.pinnedGuids.add(chatGuid)
-    else this.pinnedGuids.delete(chatGuid)
+    this.pins.set(chatGuid, pinned)
     const chat = this.chats.get(chatGuid)
     if (chat) chat.pinned = pinned
   }
@@ -26,7 +20,7 @@ export class Store {
   replaceChats(normalizedChats) {
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid)
-      this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pinnedGuids.has(chat.guid) })
+      this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) })
     }
     return this.chatList()
   }
@@ -58,7 +52,7 @@ export class Store {
   // may be new to us if the chat was never fetched via `chats`).
   upsertFromMessage(bbChat, message, contactIndex = EMPTY_CONTACT_INDEX) {
     const existing = this.chats.get(bbChat.guid)
-    const chat = existing || { ...normalizeChat(bbChat, contactIndex), pinned: this.pinnedGuids.has(bbChat.guid) }
+    const chat = existing || { ...normalizeChat(bbChat, contactIndex), pinned: this.pins.pinned.has(bbChat.guid) }
     chat.name = bbChat.displayName || chat.name
     chat.isGroup = (bbChat.participants?.length || 0) > 1
     chat.lastMessage = { text: message.text, ts: message.ts, fromMe: message.fromMe }

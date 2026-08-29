@@ -7,15 +7,12 @@ import { Bus } from './lib/bus.js'
 import { Store } from './lib/store.js'
 import { BlueBubblesClient, chatGuidOf, embeddedChat, normalizeMessage } from './lib/bluebubbles.js'
 import { ContactIndex, EMPTY_CONTACT_INDEX } from './lib/contacts.js'
-import { PinStore } from './lib/pins.js'
 
 const config = loadConfig()
 logConfigOutcome(config)
 
 const bus = new Bus(socketPath)
 const store = new Store()
-const pinStore = new PinStore()
-store.setPinnedGuids(pinStore.pinned)
 
 let connection = config.ok ? 'connecting' : 'error'
 let lastError = config.ok ? '' : config.error
@@ -168,7 +165,6 @@ async function handleCommand(payload, reply) {
 
     case 'pin':
       store.setPinned(payload.chatGuid, !!payload.pinned)
-      pinStore.set(payload.chatGuid, !!payload.pinned)
       bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
       return
 
