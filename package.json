@@ -7,9 +7,6 @@
     "mock"
   ],
   "scripts": {
-    "bundle": "esbuild daemon/index.js --bundle --platform=node --format=cjs --outfile=daemon/dist/omaimsg-daemon.cjs"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.2"
+    "bundle": "bun build daemon/index.js --target=node --format=cjs --outfile=daemon/dist/omaimsg-daemon.cjs"
   }
 }

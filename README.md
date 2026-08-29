@@ -21,7 +21,7 @@ To remove it: `omarchy plugin remove io.omaimsg`.
 ## Run against the mock
 
 ```sh
-npm install
+bun install
 node mock/server.js                # fake BlueBubbles on :3010
 OMAIMSG_CONFIG=mock/config.json node daemon/index.js
 rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/
@@ -42,7 +42,7 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 
 Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
 
-The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `npm run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `npm run bundle` and commit the result in the same round.
+The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `bun run bundle` and commit the result in the same round.
 
 ## POC scope
 
