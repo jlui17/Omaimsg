@@ -9,6 +9,12 @@ const UNPROMPTED_INTERVAL_MS = 45_000
 
 const { chats, messages } = buildStore()
 
+// Harness knobs, no BlueBubbles equivalent: smoke needs a message fetch slow
+// enough that a cache-first reply is distinguishable from a fetched one, and a
+// way to change a chat server-side WITHOUT the socket push, which is what
+// leaves the daemon's cache stale enough to need revalidating.
+let messageFetchDelayMs = 0
+
 function log(...args) {
   console.error('omaimsg-mock:', ...args)
 }
@@ -91,7 +97,7 @@ const server = createServer(async (req, res) => {
       const withAttachments = (url.searchParams.get('with') || '').split(',').some((w) => w === 'attachment' || w === 'attachments')
       const sorted = newestFirst ? [...list].reverse() : list
       const page = sorted.slice(0, limit).map((m) => (withAttachments ? m : { ...m, attachments: [] }))
-      sendJson(res, 200, envelope(page))
+      setTimeout(() => sendJson(res, 200, envelope(page)), messageFetchDelayMs)
       return
     }
 
@@ -119,6 +125,27 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'image/png' })
         res.end(body)
       }, resized ? 0 : 300)
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/__test/message-delay') {
+      messageFetchDelayMs = Number((await readBody(req)).ms) || 0
+      sendJson(res, 200, envelope({ ms: messageFetchDelayMs }))
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/__test/silent-message') {
+      const { chatGuid, text } = await readBody(req)
+      const chat = chats.get(chatGuid)
+      const list = messages.get(chatGuid)
+      if (!chat || !list) {
+        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
+        return
+      }
+      const message = buildMessage({ chat, text, fromMe: false, ts: Date.now() })
+      list.push(message)
+      chat.lastMessage = message
+      sendJson(res, 200, envelope(message))
       return
     }
 

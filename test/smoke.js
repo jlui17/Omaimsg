@@ -150,6 +150,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Harness-only endpoints on the mock (test/server.js), not BlueBubbles routes.
+async function mockControl(route, body) {
+  const res = await fetch(`http://localhost:${PORT}/__test/${route}?password=${PASSWORD}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok) throw new Error(`mock control ${route} failed: ${res.status}`)
+  return res.json()
+}
+
 // Contact loading happens off the socket "connect" event in the background,
 // so the very first `chats` reply can race it; poll instead of asserting once.
 async function waitForChatName(client, chatGuid, expectedName, timeoutMs = 3000) {
@@ -296,6 +307,36 @@ async function main() {
   client.send({ t: 'messages', chatGuid, limit: 60 })
   const messagesFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   report('messages -> non-empty list', Array.isArray(messagesFrame.messages) && messagesFrame.messages.length > 0)
+
+  // Cache-first: chatGuid is warm from the request above, so a re-request must
+  // answer well inside the fetch the daemon is simultaneously making.
+  await mockControl('message-delay', { ms: 700 })
+  const warmStart = Date.now()
+  client.send({ t: 'messages', chatGuid, limit: 60 })
+  await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
+  const warmMs = Date.now() - warmStart
+  report(
+    'messages -> cached page replies ahead of the BlueBubbles fetch',
+    warmMs < 300,
+    `${warmMs}ms against a 700ms server delay`
+  )
+
+  // Revalidation: a change the daemon never saw over the socket must still
+  // reach the client, as a second frame after the cached one.
+  const staleMarker = `omaimsg-smoke-revalidate-${process.pid}`
+  await mockControl('silent-message', { chatGuid, text: staleMarker })
+  client.send({ t: 'messages', chatGuid, limit: 60 })
+  const staleFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
+  report(
+    'cached reply is served before the server change is known',
+    !staleFrame.messages.some((m) => m.text === staleMarker)
+  )
+  await client.waitFor(
+    (f) => f.t === 'messages' && f.chatGuid === chatGuid && f.messages.some((m) => m.text === staleMarker),
+    5000
+  )
+  report('revalidation follows up with a second messages frame carrying the change', true)
+  await mockControl('message-delay', { ms: 0 })
 
   // Attachments: chat 0 seeds one image-only message (test/data.js).
   client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT, limit: 60 })

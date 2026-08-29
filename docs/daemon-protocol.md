@@ -10,7 +10,7 @@ POC scope: text messages plus image attachments. A message with attachments carr
 |---|---|
 | `{"t":"hello"}` | Request a full `state` frame (sent on every connect). |
 | `{"t":"chats","limit":40}` | Request the chat list. |
-| `{"t":"messages","chatGuid":"...","limit":60}` | Request recent messages for one chat, oldest first. |
+| `{"t":"messages","chatGuid":"...","limit":60}` | Request recent messages for one chat, oldest first. Served from the daemon's cache when warm; see the reply frame for what that means for the client. |
 | `{"t":"send","chatGuid":"...","text":"...","tempId":"..."}` | Send a text message. `tempId` is client-generated, echoed in the `ack`. |
 | `{"t":"read","chatGuid":"..."}` | Mark a chat read (clears its unread count in the daemon; not synced to Apple in the POC). |
 | `{"t":"pin","chatGuid":"...","pinned":true}` | Pin or unpin a chat. Daemon-local (Apple keeps iPhone pins outside chat.db, so BlueBubbles can't see them); persisted to `$XDG_STATE_HOME/omaimsg/pins.json` so pins survive restarts. The daemon replies by broadcasting a fresh `chats` frame to all clients. |
@@ -24,7 +24,7 @@ POC scope: text messages plus image attachments. A message with attachments carr
 |---|---|
 | `{"t":"state","connection":"connected\|connecting\|error","serverUrl":"...","unread":3,"lastError":""}` | Daemon/BlueBubbles link status. Sent on connect, on any status change, and in reply to `hello`. |
 | `{"t":"chats","chats":[Chat],"unread":3}` | Reply to `chats`. |
-| `{"t":"messages","chatGuid":"...","messages":[Message]}` | Reply to `messages`. |
+| `{"t":"messages","chatGuid":"...","messages":[Message]}` | Reply to `messages`. One request can produce **two** of these: the daemon answers a cached thread immediately, then revalidates against BlueBubbles and sends a second frame only if that page differs. Treat every `messages` frame as the full replacement for its `chatGuid`, never as an increment, and never assume one reply per request. A revalidation that fails leaves the cached frame standing with no `error` frame — a BlueBubbles outage surfaces through `state`. |
 | `{"t":"message","chatGuid":"...","message":Message,"chat":Chat,"unread":4}` | Push: a new message. The daemon always pushes the client's own sends too (BlueBubbles echoes them over Socket.IO with `tempGuid` stamped); an echoed send's `Message` carries `tempId` so the client can promote its optimistic row exactly. BlueBubbles emits that echo twice under one guid, only the first stamped with `tempGuid`; the daemon forwards a guid once, so the client never sees a duplicate frame. `chat` is the updated preview for the list. |
 | `{"t":"ack","for":"send","chatGuid":"...","tempId":"...","guid":"...","ok":true}` | Send accepted by BlueBubbles. `guid` is the real message guid from the send response (`""` if unavailable). `ok:false` plus `message` on failure. |
 | `{"t":"attachment","guid":"...","path":"/abs/path"}` | Reply to `attachment`: the file is on disk at `path`. |
@@ -44,3 +44,5 @@ Message.attachments: [{ guid, mime, name }], present only when non-empty. `mime`
 ```
 
 Unread counts are daemon-owned, in-memory only (reset on daemon restart): +1 per inbound message to a chat that isn't marked read since, cleared by `read`.
+
+Thread pages are cached the same way — in memory, dying with the daemon: the last 60 messages of each of the 30 most recently read chats, kept warm by inbound pushes.
