@@ -34,6 +34,10 @@ Panel {
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
   readonly property int chatLimit: root.setting("chatLimit", 40)
   readonly property int messageLimit: root.setting("messageLimit", 60)
+  // Relative timestamps are computed client-side, so a list this old is stale
+  // only in the sense that a message could have arrived with the daemon's
+  // socket down; the reconnect path zeroes the age for exactly that case.
+  readonly property int chatsMaxAgeMs: 30000
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   // Popup content must use the theme foreground. barForeground can switch to a
@@ -322,7 +326,10 @@ Panel {
     if (!root.opened || !root.client) return
     root.statusLine = ""
     root.client.refresh()
-    root.client.requestChats(root.chatLimit)
+    // A re-request costs the daemon a paginated sweep of the whole account, and
+    // it already pushes a fresh `chats` frame on every inbound message, so the
+    // open pays for one only once the pushed list has gone quiet.
+    if (root.client.chatsAgeMs() > root.chatsMaxAgeMs) root.client.requestChats(root.chatLimit)
     if (root.view !== "thread" || !root.activeGuid) return
     root.client.reloadActiveMessages(root.messageLimit)
     root.client.markRead(root.activeGuid)
