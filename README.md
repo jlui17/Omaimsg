@@ -8,7 +8,7 @@ Prototype code answering one question: is a keyboard-driven iMessage popup in th
 
 - `manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml` — the Omarchy shell plugin, at the repo root (required by `omarchy plugin add`, which clones the repo straight into the plugins dir).
 - `daemon/` — Node daemon. Speaks REST + Socket.IO to BlueBubbles, serves NDJSON over a Unix socket (`$XDG_RUNTIME_DIR/omaimsg.sock`) to the plugin. One daemon, many plugin clients (one per monitor).
-- `mock/` — fake BlueBubbles server with canned chats for development, plus `smoke.js`, an end-to-end test of the daemon over the real Unix socket.
+- `test/` — the test harness: a fake BlueBubbles server with canned chats, plus `smoke.js`, an end-to-end test of the daemon over the real Unix socket.
 
 ## Install
 
@@ -18,19 +18,19 @@ omarchy plugin add https://github.com/jlui17/Omaimsg.git --enable
 
 To remove it: `omarchy plugin remove io.omaimsg`.
 
-## Run against the mock
+## Run against the fake BlueBubbles server
 
 ```sh
 bun install
-node mock/server.js                # fake BlueBubbles on :3010
-OMAIMSG_CONFIG=mock/config.json node daemon/index.js
+node test/server.js                # fake BlueBubbles on :3010
+OMAIMSG_CONFIG=test/config.json node daemon/index.js
 rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/
 omarchy plugin enable io.omaimsg   # widget lands in the bar's right section
 ```
 
 The plugin dir must be a real copy, not a symlink: the shell's file watcher doesn't see writes through a symlink, so hot reload never fires. And hot reload only refreshes panel code; a changed `BarWidget.qml` (anything touching the bar widget instance or its `IpcHandler`) needs `omarchy-restart-shell` to re-instantiate. `omarchy-shell io.omaimsg toggle` opens/closes the panel from a script or keybinding.
 
-`node mock/smoke.js` runs the whole daemon protocol end to end without the shell.
+`node test/smoke.js` runs the whole daemon protocol end to end without the shell.
 
 ## Run against a real Mac
 

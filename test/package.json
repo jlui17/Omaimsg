@@ -1,8 +1,8 @@
 {
-  "name": "omaimsg-mock-bluebubbles",
+  "name": "omaimsg-test-harness",
   "version": "0.1.0",
   "private": true,
-  "description": "Fake BlueBubbles server for developing the omaimsg daemon against.",
+  "description": "Fake BlueBubbles server and end-to-end smoke test for the omaimsg daemon.",
   "type": "module",
   "main": "server.js",
   "engines": {

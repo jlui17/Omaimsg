@@ -191,7 +191,7 @@ function cleanup() {
 
 async function main() {
   trackSpawn(
-    spawn('node', ['mock/server.js', String(PORT)], {
+    spawn('node', ['test/server.js', String(PORT)], {
       cwd: repoRoot,
       env: { ...process.env, MOCK_BB_PASSWORD: PASSWORD },
       stdio: ['ignore', 'ignore', 'inherit']
@@ -297,7 +297,7 @@ async function main() {
   const messagesFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   report('messages -> non-empty list', Array.isArray(messagesFrame.messages) && messagesFrame.messages.length > 0)
 
-  // Attachments: chat 0 seeds one image-only message (mock/data.js).
+  // Attachments: chat 0 seeds one image-only message (test/data.js).
   client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT, limit: 60 })
   const attachmentChatFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === ATTACHMENT_TEST_CHAT)
   const attachmentMessage = attachmentChatFrame.messages.find((m) => m.attachments?.length)

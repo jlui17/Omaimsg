@@ -20,7 +20,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 │   ├── 0001-daemon-owns-all-networking.md
 │   └── 0002-ndjson-over-unix-socket.md
 ├── daemon/
-└── mock/
+└── test/
 ```
 
 ## Use the glossary's vocabulary

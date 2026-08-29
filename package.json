@@ -4,7 +4,7 @@
   "type": "module",
   "workspaces": [
     "daemon",
-    "mock"
+    "test"
   ],
   "scripts": {
     "bundle": "bun build daemon/index.js --target=node --format=cjs --outfile=daemon/dist/omaimsg-daemon.cjs"
