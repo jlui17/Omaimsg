@@ -34,6 +34,13 @@ Item {
   property string activeChatGuid: ""
   property var activeMessages: []
 
+  // Chat guid -> the thread as last known, so re-entering a chat visited this
+  // session renders instantly instead of waiting on the daemon. Replaced
+  // wholesale on every write so bindings that index into it re-evaluate.
+  property var threadCache: ({})
+  readonly property bool activeThreadLoaded: root.activeChatGuid.length > 0
+    && root.threadCache[root.activeChatGuid] !== undefined
+
   // Attachment guid -> file:// URL of the daemon-downloaded file, plus the
   // in-flight set. Both are replaced wholesale on every change so delegate
   // bindings that index into them re-evaluate.
@@ -125,13 +132,16 @@ Item {
   function openChat(chatGuid, limit) {
     if (!chatGuid || !chatGuid.length) return false
     root.activeChatGuid = chatGuid
-    root.activeMessages = []
+    // A chat seen this session renders from cache while the daemon's page is in
+    // flight; an unvisited one shows nothing rather than the last chat's rows.
+    root.activeMessages = root.threadCache[chatGuid] || []
     return root.loadMessages(chatGuid, limit)
   }
 
+  // activeMessages survives the close: the per-guid cache is what the next
+  // entry reads, and emptying here is what used to blank the thread on re-entry.
   function closeChat() {
     root.activeChatGuid = ""
-    root.activeMessages = []
   }
 
   // Re-requests the open thread without emptying it, so a reopened panel keeps
@@ -162,11 +172,21 @@ Item {
     return true
   }
 
+  // The cache is written on every mutation, not only on load, so an optimistic
+  // row and its ack survive leaving the thread and coming back.
+  function setActiveMessages(list) {
+    root.activeMessages = list || []
+    if (!root.activeChatGuid.length) return
+    var next = Object.assign({}, root.threadCache)
+    next[root.activeChatGuid] = root.activeMessages
+    root.threadCache = next
+  }
+
   function appendActiveMessage(message) {
     if (!message) return
     var list = root.activeMessages.slice()
     list.push(message)
-    root.activeMessages = list
+    root.setActiveMessages(list)
   }
 
   function patchActiveMessage(guid, fields) {
@@ -174,7 +194,7 @@ Item {
     for (var i = list.length - 1; i >= 0; i--) {
       if (list[i].guid !== guid) continue
       list[i] = Object.assign({}, list[i], fields)
-      root.activeMessages = list
+      root.setActiveMessages(list)
       return
     }
   }
@@ -194,7 +214,7 @@ Item {
         : ((message.guid && row.guid === message.guid) || row.text === message.text)
       if (!matches) continue
       list[i] = message
-      root.activeMessages = list
+      root.setActiveMessages(list)
       return true
     }
     return false
@@ -307,7 +327,7 @@ Item {
 
       case "messages":
         if ((frame.chatGuid || "") === root.activeChatGuid) {
-          root.activeMessages = frame.messages || []
+          root.setActiveMessages(frame.messages || [])
         }
         break
 

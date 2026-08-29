@@ -31,6 +31,7 @@ Panel {
   readonly property var chats: client ? client.chats : []
   readonly property string activeGuid: client ? client.activeChatGuid : ""
   readonly property var messages: client ? client.activeMessages : []
+  readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
   readonly property int chatLimit: root.setting("chatLimit", 40)
   readonly property int messageLimit: root.setting("messageLimit", 60)
 
@@ -786,7 +787,9 @@ Panel {
           Text {
             width: parent.width
             visible: root.messages.length === 0
-            text: "No messages yet."
+            // "No messages yet." is a claim about the chat, so it waits until a
+            // page has actually come back; until then the thread is loading.
+            text: root.threadLoaded ? "No messages yet." : "Loading…"
             color: root.secondaryForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
