@@ -1,5 +1,8 @@
+import { existsSync } from 'node:fs'
+import { copyFile } from 'node:fs/promises'
+
 import { loadConfig, logConfigOutcome } from './lib/config.js'
-import { socketPath } from './lib/paths.js'
+import { attachmentPath, socketPath } from './lib/paths.js'
 import { logger } from './lib/logger.js'
 import { Bus } from './lib/bus.js'
 import { Store } from './lib/store.js'
@@ -29,6 +32,36 @@ function pushState() {
 }
 
 let session = null
+
+// In-flight downloads by guid+size: every panel client requests the same
+// image on thread open, and racing duplicate fetches would tear the .part
+// rename.
+const attachmentDownloads = new Map()
+
+async function ensureAttachment(guid, size = 'thumbnail') {
+  const filePath = attachmentPath(guid, size === 'full' ? '.full' : '')
+  if (existsSync(filePath)) return filePath
+  const key = `${guid}:${size}`
+  let download = attachmentDownloads.get(key)
+  if (!download) {
+    download = session.downloadAttachment(guid, filePath, { thumbnail: size !== 'full' })
+      .finally(() => attachmentDownloads.delete(key))
+    attachmentDownloads.set(key, download)
+  }
+  await download
+  return filePath
+}
+
+// The preview file is disposable (rebuilt from the caches on every request),
+// so it is overwritten in place rather than rename-swapped: an in-place write
+// is what the viewer's file watcher reliably sees as a change.
+async function upgradePreview(guid, previewPath) {
+  try {
+    await copyFile(await ensureAttachment(guid, 'full'), previewPath)
+  } catch (err) {
+    logger.warn('preview upgrade failed, viewer keeps the thumbnail', { guid, err: err.message })
+  }
+}
 
 if (config.ok) {
   session = new BlueBubblesSession(config)
@@ -103,6 +136,43 @@ async function handleCommand(payload, reply) {
         reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId: payload.tempId, guid: sent.guid || '', ok: true })
       } catch (err) {
         reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId: payload.tempId, guid: '', ok: false, message: err.message })
+      }
+      return
+
+    case 'attachment':
+      if (!config.ok) {
+        reply({ t: 'error', for: 'attachment', guid: payload.guid || '', message: lastError })
+        return
+      }
+      if (!payload.guid) {
+        reply({ t: 'error', for: 'attachment', guid: '', message: 'guid required' })
+        return
+      }
+      try {
+        reply({ t: 'attachment', guid: payload.guid, path: await ensureAttachment(payload.guid) })
+      } catch (err) {
+        reply({ t: 'error', for: 'attachment', guid: payload.guid, message: err.message })
+      }
+      return
+
+    case 'preview':
+      if (!config.ok) {
+        reply({ t: 'error', for: 'preview', guid: payload.guid || '', message: lastError })
+        return
+      }
+      if (!payload.guid) {
+        reply({ t: 'error', for: 'preview', guid: '', message: 'guid required' })
+        return
+      }
+      try {
+        const previewPath = attachmentPath(payload.guid, '.preview')
+        const fullPath = attachmentPath(payload.guid, '.full')
+        const haveFull = existsSync(fullPath)
+        await copyFile(haveFull ? fullPath : await ensureAttachment(payload.guid), previewPath)
+        reply({ t: 'preview', guid: payload.guid, path: previewPath })
+        if (!haveFull) upgradePreview(payload.guid, previewPath)
+      } catch (err) {
+        reply({ t: 'error', for: 'preview', guid: payload.guid, message: err.message })
       }
       return
 

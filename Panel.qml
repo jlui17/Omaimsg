@@ -558,6 +558,18 @@ Panel {
               readonly property bool showSender: !bubbleRow.modelData.fromMe
                 && root.threadIsGroup
                 && !!bubbleRow.modelData.sender
+              readonly property var imageAttachments: (bubbleRow.modelData.attachments || [])
+                .filter(function (a) { return a && a.mime && a.mime.indexOf("image/") === 0 })
+              readonly property real imageWidth: bubbleRow.imageAttachments.length > 0
+                ? Math.min(bubbleRow.maxInner, Style.space(180))
+                : 0
+              // The daemon substitutes "[attachment]" for attachment-only
+              // messages (docs/daemon-protocol.md); when the image itself is
+              // rendered here, that placeholder is noise.
+              readonly property string bodyText: {
+                var t = bubbleRow.modelData.text || ""
+                return t === "[attachment]" && bubbleRow.imageAttachments.length > 0 ? "" : t
+              }
 
               Rectangle {
                 id: bubble
@@ -578,6 +590,7 @@ Panel {
                   spacing: Style.space(1)
                   width: Math.max(
                     bubbleRow.showSender ? senderLabel.width : 0,
+                    bubbleRow.imageWidth,
                     bodyLabel.width,
                     Math.min(metaLabel.implicitWidth, bubbleRow.maxInner))
 
@@ -593,10 +606,58 @@ Panel {
                     elide: Text.ElideRight
                   }
 
+                  Repeater {
+                    model: bubbleRow.imageAttachments
+
+                    delegate: Rectangle {
+                      id: imageFrame
+                      required property var modelData
+
+                      readonly property string localPath: root.client
+                        ? (root.client.attachmentPaths[imageFrame.modelData.guid] || "")
+                        : ""
+
+                      width: bubbleRow.imageWidth
+                      height: picture.status === Image.Ready
+                        ? Math.max(1, Math.round(width * picture.implicitHeight / Math.max(1, picture.implicitWidth)))
+                        : Style.space(100)
+                      radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
+                      color: Style.normalFillFor(root.foreground, root.accent)
+
+                      Component.onCompleted: if (root.client) root.client.requestAttachment(imageFrame.modelData.guid)
+
+                      Image {
+                        id: picture
+                        anchors.fill: parent
+                        source: imageFrame.localPath
+                        asynchronous: true
+                        fillMode: Image.PreserveAspectFit
+                        visible: status === Image.Ready
+                      }
+
+                      Text {
+                        anchors.centerIn: parent
+                        visible: picture.status !== Image.Ready
+                        // nf-md-image, or nf-md-image_off once loading failed
+                        text: picture.status === Image.Error ? "󰋫" : "󰋩"
+                        color: root.secondaryForeground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.subtitle
+                      }
+
+                      MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: if (root.client) root.client.requestPreview(imageFrame.modelData.guid)
+                      }
+                    }
+                  }
+
                   Text {
                     id: bodyLabel
+                    visible: text.length > 0
                     width: Math.min(implicitWidth, bubbleRow.maxInner)
-                    text: bubbleRow.modelData.text || ""
+                    text: bubbleRow.bodyText
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body

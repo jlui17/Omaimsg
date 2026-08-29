@@ -16,11 +16,22 @@
 //   default (DEFAULT_MESSAGE_CONFIG.includeChats = true in
 //   api/serializers/constants.ts), each message shaped like
 //   {guid, text, handle: {address}, chats: [...], attachments: [], isFromMe,
-//   dateCreated} where dateCreated is already unix milliseconds.
+//   dateCreated} where dateCreated is already unix milliseconds. Attachments
+//   are only populated when the query carries `with=attachment`
+//   (chatRouter.ts getMessages: withAttachments); verified against the real
+//   server that omitting it yields no attachments on any message.
 // - POST /api/v1/message/text body: {chatGuid, tempGuid, message, method};
 //   the server defaults `method` to "apple-script" when omitted
 //   (api/interfaces/messageInterface.ts), which is also the safer default
 //   (no Private API / SIP setup required), so that's this daemon's default.
+// - GET /api/v1/attachment/:guid/download streams the file's raw bytes (no
+//   JSON envelope). Unless `original=true`, convertImage always runs first
+//   (attachmentRouter.ts download), so HEIC comes back as a decodable format
+//   even with no other params; `width`/`height`/`quality` additionally
+//   resize, and any resized output is re-encoded as PNG ("all resized images
+//   are PNGs"). So: thumbnail = width param, full size = no params, and
+//   never `original=true`. An unknown guid is a 404 with the standard JSON
+//   error envelope.
 // - GET /api/v1/contact returns contacts already normalized to
 //   {phoneNumbers:[{address,id}], emails:[{address,id}], displayName, ...}
 //   (api/interfaces/contactInterface.ts, ContactInterface.mapContacts); see
@@ -34,6 +45,9 @@
 // pagination and does its own ranking (Store.chatList) rather than trusting
 // any server-side top-N cut.
 
+import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
 import { io } from 'socket.io-client'
 
 import { ContactIndex, EMPTY_CONTACT_INDEX } from './contacts.js'
@@ -41,6 +55,11 @@ import { logger } from './logger.js'
 
 const CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200
 const CHAT_FETCH_CAP = 2000
+// Thumbnail width for image downloads: enough for a crisp panel bubble on a
+// hidpi screen, while keeping multi-MB camera originals off disk. Wrong if
+// the panel ever grows a full-size image viewer, which should fetch the
+// original instead.
+const ATTACHMENT_IMAGE_WIDTH = 1024
 
 // Both transports plus the contact index behind one interface: callers get
 // protocol-shaped Chat/Message objects and a connection state, never a
@@ -117,6 +136,10 @@ export class BlueBubblesSession {
     return this.client.sendText({ chatGuid, text, tempGuid })
   }
 
+  async downloadAttachment(guid, filePath, opts) {
+    return this.client.downloadAttachment(guid, filePath, opts)
+  }
+
   async _refreshContacts() {
     try {
       const contacts = await this.client.getContacts()
@@ -179,7 +202,7 @@ class BlueBubblesClient {
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
     // Newest-first from the server; the protocol wants oldest-first.
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
-      query: { limit, sort: 'DESC' }
+      query: { limit, sort: 'DESC', with: 'attachment' }
     })
     return data.map((message) => normalizeMessage(message, contactIndex)).reverse()
   }
@@ -195,6 +218,32 @@ class BlueBubblesClient {
 
   async getContacts() {
     return this._request('/api/v1/contact')
+  }
+
+  // Downloads straight to disk via a .part rename, so a crash mid-write can
+  // never leave a truncated file that the guid-keyed cache then trusts forever.
+  async downloadAttachment(guid, filePath, { thumbnail = true } = {}) {
+    const url = new URL(`${this.serverUrl}/api/v1/attachment/${encodeURIComponent(guid)}/download`)
+    url.searchParams.set('password', this.password)
+    if (thumbnail) url.searchParams.set('width', String(ATTACHMENT_IMAGE_WIDTH))
+
+    const res = await fetch(url)
+    if (res.status === 401) throw new Error('BlueBubbles rejected the password (401)')
+    if (!res.ok) {
+      let message = `attachment download failed (${res.status})`
+      try {
+        const envelope = await res.json()
+        message = envelope.error?.error || envelope.message || message
+      } catch {
+        // Error body wasn't the JSON envelope; keep the status-code message.
+      }
+      throw new Error(message)
+    }
+
+    const bytes = Buffer.from(await res.arrayBuffer())
+    await mkdir(dirname(filePath), { recursive: true })
+    await writeFile(`${filePath}.part`, bytes)
+    await rename(`${filePath}.part`, filePath)
   }
 }
 
@@ -241,12 +290,18 @@ function messageText(bbMessage) {
 
 function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const rawSender = bbMessage.handle?.address || ''
+  const attachments = (bbMessage.attachments || []).map((a) => ({
+    guid: a.guid,
+    mime: a.mimeType || '',
+    name: a.transferName || ''
+  }))
   return {
     guid: bbMessage.guid,
     text: messageText(bbMessage),
     ts: bbMessage.dateCreated ?? bbMessage.dateDelivered ?? Date.now(),
     fromMe: !!bbMessage.isFromMe,
     sender: bbMessage.isFromMe ? '' : (contactIndex.resolve(rawSender) || rawSender),
+    ...(attachments.length ? { attachments } : {}),
     // Only the socket echo of a just-sent message carries tempGuid; a plain
     // REST fetch never does, so tempId is omitted rather than "".
     ...(bbMessage.tempGuid ? { tempId: bbMessage.tempGuid } : {})

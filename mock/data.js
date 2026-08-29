@@ -79,6 +79,22 @@ export const SHORTCODE_TEST_CHAT = { guid: 'SMS;-;753310', rawName: '753310', wr
 // Unnamed group: first names of resolved members, raw handle for the rest.
 export const UNNAMED_GROUP_TEST_CHAT = { guid: 'iMessage;+;chat1122334455', expectedName: 'Maya & +15551230004' }
 
+// The seeded image-only message (chat 0, third message), with the bytes the
+// mock's download route serves for it: a 1x1 PNG, exported so smoke.js can
+// byte-compare what the daemon wrote to disk.
+export const ATTACHMENT_TEST_CHAT = CHAT_DEFS[0].guid
+export const ATTACHMENT_TEST = { guid: 'MOCK-ATTACHMENT-1', mimeType: 'image/png', transferName: 'photo.png' }
+export const ATTACHMENT_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+)
+// A different 1x1 PNG: what the mock serves when the download request has no
+// resize params, i.e. the daemon asked for the full-size file.
+export const ATTACHMENT_PNG_FULL = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64'
+)
+
 const BANK = [
   "hey, you around?", "just saw this and thought of you", "omg yes", "lol true",
   "what time works for you tomorrow", "running 5 min late", "sounds good", "no worries!",
@@ -119,7 +135,7 @@ function buildMessage({ chat, text, fromMe, ts, attachmentOnly }) {
     handleId: handle?.originalROWID ?? 0,
     otherHandle: 0,
     chats: [chatSnapshot(chat)],
-    attachments: attachmentOnly ? [{ originalROWID: nextRowId(), guid: guid(), mimeType: 'image/png', transferName: 'photo.png' }] : [],
+    attachments: attachmentOnly ? [{ originalROWID: nextRowId(), ...ATTACHMENT_TEST }] : [],
     isFromMe: fromMe,
     dateCreated: ts,
     dateRead: fromMe ? null : ts + 1000,

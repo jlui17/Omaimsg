@@ -46,4 +46,4 @@ The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run b
 
 ## POC scope
 
-Text messages only. Deferred, not dropped: attachments (rendered as `[attachment]`), tapbacks, typing indicators, read-receipt sync back to Apple, message cache persistence (unread counts reset with the daemon).
+Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple, message cache persistence (unread counts reset with the daemon).

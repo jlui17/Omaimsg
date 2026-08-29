@@ -15,3 +15,15 @@ export const pinsPath = join(
   'omaimsg',
   'pins.json'
 )
+
+const attachmentsDir = join(
+  process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
+  'omaimsg',
+  'attachments'
+)
+
+// base64url rather than the raw guid: BlueBubbles attachment guids can carry
+// characters that are unsafe as filenames, and the encoding stays collision-free.
+export function attachmentPath(guid, suffix = '') {
+  return join(attachmentsDir, Buffer.from(guid, 'utf8').toString('base64url') + suffix)
+}

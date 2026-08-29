@@ -6,7 +6,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CONTACT_TEST_CHATS, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from './data.js'
+import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -18,6 +18,7 @@ const configPath = path.join(os.tmpdir(), `omaimsg-smoke-config-${process.pid}.j
 const socketPath = path.join(os.tmpdir(), `omaimsg-smoke-${process.pid}.sock`)
 const stateHome = path.join(os.tmpdir(), `omaimsg-smoke-state-${process.pid}`)
 const pinsFilePath = path.join(stateHome, 'omaimsg', 'pins.json')
+const cacheHome = path.join(os.tmpdir(), `omaimsg-smoke-cache-${process.pid}`)
 
 const failures = []
 function report(step, cond, detail) {
@@ -179,10 +180,12 @@ function cleanup() {
       // Already gone.
     }
   }
-  try {
-    rmSync(stateHome, { force: true, recursive: true })
-  } catch {
-    // Already gone.
+  for (const dir of [stateHome, cacheHome]) {
+    try {
+      rmSync(dir, { force: true, recursive: true })
+    } catch {
+      // Already gone.
+    }
   }
 }
 
@@ -214,6 +217,7 @@ async function main() {
         OMAIMSG_CONFIG: configPath,
         OMAIMSG_SOCKET: socketPath,
         XDG_STATE_HOME: stateHome,
+        XDG_CACHE_HOME: cacheHome,
         OMAIMSG_CHAT_PAGE_SIZE: '3'
       },
       stdio: ['ignore', 'ignore', 'inherit']
@@ -292,6 +296,112 @@ async function main() {
   client.send({ t: 'messages', chatGuid, limit: 60 })
   const messagesFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   report('messages -> non-empty list', Array.isArray(messagesFrame.messages) && messagesFrame.messages.length > 0)
+
+  // Attachments: chat 0 seeds one image-only message (mock/data.js).
+  client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT, limit: 60 })
+  const attachmentChatFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === ATTACHMENT_TEST_CHAT)
+  const attachmentMessage = attachmentChatFrame.messages.find((m) => m.attachments?.length)
+  report(
+    'attachment message carries {guid, mime, name} metadata',
+    attachmentMessage?.attachments?.[0]?.guid === ATTACHMENT_TEST.guid
+      && attachmentMessage?.attachments?.[0]?.mime === ATTACHMENT_TEST.mimeType
+      && attachmentMessage?.attachments?.[0]?.name === ATTACHMENT_TEST.transferName,
+    JSON.stringify(attachmentMessage?.attachments)
+  )
+  report(
+    'attachment-only message keeps "[attachment]" placeholder text',
+    attachmentMessage?.text === '[attachment]',
+    JSON.stringify(attachmentMessage?.text)
+  )
+  report(
+    'messages without attachments omit the field',
+    attachmentChatFrame.messages.some((m) => !('attachments' in m)),
+    'every message carried attachments'
+  )
+
+  client.send({ t: 'attachment', guid: ATTACHMENT_TEST.guid })
+  const downloadFrame = await client.waitFor((f) => f.t === 'attachment' && f.guid === ATTACHMENT_TEST.guid)
+  report(
+    'attachment -> path under XDG_CACHE_HOME',
+    typeof downloadFrame.path === 'string' && downloadFrame.path.startsWith(cacheHome),
+    JSON.stringify(downloadFrame)
+  )
+  const downloadedBytes = existsSync(downloadFrame.path) ? readFileSync(downloadFrame.path) : null
+  report('attachment -> downloaded bytes match the mock PNG', downloadedBytes !== null && downloadedBytes.equals(ATTACHMENT_PNG))
+  report('attachment -> no .part file left behind', !existsSync(`${downloadFrame.path}.part`))
+
+  // Cache: poison the file, re-request, and require the poison to survive --
+  // a daemon that re-downloads on a warm guid would overwrite it.
+  writeFileSync(downloadFrame.path, 'sentinel')
+  client.send({ t: 'attachment', guid: ATTACHMENT_TEST.guid })
+  const cachedFrame = await client.waitFor((f) => f.t === 'attachment' && f.guid === ATTACHMENT_TEST.guid)
+  report(
+    'attachment -> second request is a cache hit (same path, no re-download)',
+    cachedFrame.path === downloadFrame.path && readFileSync(downloadFrame.path, 'utf8') === 'sentinel',
+    JSON.stringify(cachedFrame)
+  )
+
+  client.send({ t: 'attachment', guid: 'MOCK-ATTACHMENT-MISSING' })
+  const attachmentError = await client.waitFor((f) => f.t === 'error' && f.for === 'attachment')
+  report(
+    'unknown attachment -> error frame carries the guid',
+    attachmentError.guid === 'MOCK-ATTACHMENT-MISSING' && typeof attachmentError.message === 'string' && attachmentError.message.length > 0,
+    JSON.stringify(attachmentError)
+  )
+
+  // Preview: replies instantly with a thumb-backed copy, upgrades the same
+  // file in place once the full-size download lands. The thumbnail cache
+  // still holds the "sentinel" poison from the cache-hit test above, which
+  // makes the copy provenance unambiguous.
+  client.send({ t: 'preview', guid: ATTACHMENT_TEST.guid })
+  const previewFrame = await client.waitFor((f) => f.t === 'preview' && f.guid === ATTACHMENT_TEST.guid)
+  report('preview -> distinct .preview path', previewFrame.path === `${downloadFrame.path}.preview`, JSON.stringify(previewFrame))
+  report(
+    'preview -> initial bytes copied from the thumbnail cache',
+    existsSync(previewFrame.path) && readFileSync(previewFrame.path, 'utf8') === 'sentinel',
+    'preview did not start as the thumb copy'
+  )
+
+  const upgradeDeadline = Date.now() + 5000
+  let upgraded = false
+  while (Date.now() < upgradeDeadline && !upgraded) {
+    upgraded = readFileSync(previewFrame.path).equals(ATTACHMENT_PNG_FULL)
+    if (!upgraded) await sleep(100)
+  }
+  report('preview -> upgraded in place to the full-size bytes', upgraded)
+  const fullCachePath = `${downloadFrame.path}.full`
+  report(
+    'preview -> full-size download cached alongside the thumb',
+    existsSync(fullCachePath) && readFileSync(fullCachePath).equals(ATTACHMENT_PNG_FULL)
+  )
+
+  // Warm-path: with .full cached, the reply must serve it directly -- no
+  // thumb copy, no re-download. Byte-comparing the preview can't prove that
+  // (a local thumb-copy-then-upgrade converges to the same bytes almost
+  // instantly), so delete the thumb cache instead: only the cold path would
+  // recreate it.
+  writeFileSync(fullCachePath, 'full-sentinel')
+  rmSync(downloadFrame.path)
+  client.send({ t: 'preview', guid: ATTACHMENT_TEST.guid })
+  const warmPreview = await client.waitFor((f) => f.t === 'preview' && f.guid === ATTACHMENT_TEST.guid)
+  report(
+    'preview -> warm request serves the cached full file',
+    warmPreview.path === previewFrame.path && readFileSync(warmPreview.path, 'utf8') === 'full-sentinel',
+    JSON.stringify(warmPreview)
+  )
+  report(
+    'preview -> warm request never touches the thumbnail path',
+    !existsSync(downloadFrame.path),
+    'thumb cache file was recreated'
+  )
+
+  client.send({ t: 'preview', guid: 'MOCK-ATTACHMENT-MISSING' })
+  const previewError = await client.waitFor((f) => f.t === 'error' && f.for === 'preview')
+  report(
+    'unknown preview -> error frame carries the guid',
+    previewError.guid === 'MOCK-ATTACHMENT-MISSING' && typeof previewError.message === 'string' && previewError.message.length > 0,
+    JSON.stringify(previewError)
+  )
 
   client.send({ t: 'chats' })
   const unreadBaseline = (await client.waitFor((f) => f.t === 'chats')).unread

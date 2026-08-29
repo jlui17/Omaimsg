@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { Server as SocketIOServer } from 'socket.io'
-import { buildStore, buildMessage, pick, BANK, CONTACTS } from './data.js'
+import { buildStore, buildMessage, pick, ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, BANK, CONTACTS } from './data.js'
 
 const PORT = Number(process.argv[2]) || 3010
 const PASSWORD = process.env.MOCK_BB_PASSWORD || 'testpass'
@@ -86,8 +86,39 @@ const server = createServer(async (req, res) => {
       }
       const limit = Number(url.searchParams.get('limit')) || 100
       const newestFirst = url.searchParams.get('sort') !== 'ASC'
+      // Like the real chatRouter.getMessages: attachments are serialized only
+      // when the query asks for them via `with=attachment`.
+      const withAttachments = (url.searchParams.get('with') || '').split(',').some((w) => w === 'attachment' || w === 'attachments')
       const sorted = newestFirst ? [...list].reverse() : list
-      sendJson(res, 200, envelope(sorted.slice(0, limit)))
+      const page = sorted.slice(0, limit).map((m) => (withAttachments ? m : { ...m, attachments: [] }))
+      sendJson(res, 200, envelope(page))
+      return
+    }
+
+    const attachmentMatch = url.pathname.match(/^\/api\/v1\/attachment\/(.+)\/download$/)
+    if (req.method === 'GET' && attachmentMatch) {
+      const attachmentGuid = decodeURIComponent(attachmentMatch[1])
+      const known = [...messages.values()].some((list) =>
+        list.some((m) => m.attachments.some((a) => a.guid === attachmentGuid)))
+      if (!known) {
+        sendJson(res, 404, {
+          status: 404,
+          message: 'Not Found',
+          error: { type: 'Not Found', error: 'Attachment does not exist!' }
+        })
+        return
+      }
+      // Raw bytes, no JSON envelope, like the real attachmentRouter. Resize
+      // params -> the thumbnail bytes; no params -> the full-size bytes,
+      // after a delay long enough that a preview reply always lands while
+      // the full download is still in flight (what a camera original over
+      // the network does), so smoke can observe the thumb-first state.
+      const resized = url.searchParams.has('width') || url.searchParams.has('height') || url.searchParams.has('quality')
+      const body = resized ? ATTACHMENT_PNG : ATTACHMENT_PNG_FULL
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'image/png' })
+        res.end(body)
+      }, resized ? 0 : 300)
       return
     }
 

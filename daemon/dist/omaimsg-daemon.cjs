@@ -4026,6 +4026,10 @@ var require_websocket_server = __commonJS(function(exports2, module2) {
   }
 });
 
+// daemon/index.js
+var import_node_fs4 = require("node:fs");
+var import_promises2 = require("node:fs/promises");
+
 // daemon/lib/config.js
 var import_node_fs = require("node:fs");
 
@@ -4035,6 +4039,10 @@ var import_node_os = require("node:os");
 var socketPath = process.env.OMAIMSG_SOCKET || import_node_path.join(process.env.XDG_RUNTIME_DIR || "/tmp", "omaimsg.sock");
 var configPath = process.env.OMAIMSG_CONFIG || import_node_path.join(import_node_os.homedir(), ".config", "omaimsg", "config.json");
 var pinsPath = import_node_path.join(process.env.XDG_STATE_HOME || import_node_path.join(import_node_os.homedir(), ".local", "state"), "omaimsg", "pins.json");
+var attachmentsDir = import_node_path.join(process.env.XDG_CACHE_HOME || import_node_path.join(import_node_os.homedir(), ".cache"), "omaimsg", "attachments");
+function attachmentPath(guid, suffix = "") {
+  return import_node_path.join(attachmentsDir, Buffer.from(guid, "utf8").toString("base64url") + suffix);
+}
 
 // daemon/lib/logger.js
 var PREFIX = "omaimsg-daemon:";
@@ -4319,6 +4327,10 @@ class Store {
     chat.unread = 0;
   }
 }
+
+// daemon/lib/bluebubbles.js
+var import_promises = require("node:fs/promises");
+var import_node_path3 = require("node:path");
 
 // node_modules/.bun/engine.io-client@6.6.6/node_modules/engine.io-client/build/esm-debug/transports/polling-xhr.node.js
 var XMLHttpRequestModule = __toESM(require_XMLHttpRequest(), 1);
@@ -7099,6 +7111,7 @@ var EMPTY_CONTACT_INDEX = new ContactIndex([]);
 // daemon/lib/bluebubbles.js
 var CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200;
 var CHAT_FETCH_CAP = 2000;
+var ATTACHMENT_IMAGE_WIDTH = 1024;
 
 class BlueBubblesSession {
   constructor(config) {
@@ -7157,6 +7170,9 @@ class BlueBubblesSession {
   async sendText({ chatGuid, text, tempGuid }) {
     return this.client.sendText({ chatGuid, text, tempGuid });
   }
+  async downloadAttachment(guid, filePath, opts) {
+    return this.client.downloadAttachment(guid, filePath, opts);
+  }
   async _refreshContacts() {
     try {
       const contacts = await this.client.getContacts();
@@ -7211,7 +7227,7 @@ class BlueBubblesClient {
   }
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
-      query: { limit, sort: "DESC" }
+      query: { limit, sort: "DESC", with: "attachment" }
     });
     return data.map((message) => normalizeMessage(message, contactIndex)).reverse();
   }
@@ -7224,6 +7240,27 @@ class BlueBubblesClient {
   }
   async getContacts() {
     return this._request("/api/v1/contact");
+  }
+  async downloadAttachment(guid, filePath, { thumbnail = true } = {}) {
+    const url2 = new URL(`${this.serverUrl}/api/v1/attachment/${encodeURIComponent(guid)}/download`);
+    url2.searchParams.set("password", this.password);
+    if (thumbnail)
+      url2.searchParams.set("width", String(ATTACHMENT_IMAGE_WIDTH));
+    const res = await fetch(url2);
+    if (res.status === 401)
+      throw new Error("BlueBubbles rejected the password (401)");
+    if (!res.ok) {
+      let message = `attachment download failed (${res.status})`;
+      try {
+        const envelope = await res.json();
+        message = envelope.error?.error || envelope.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    await import_promises.mkdir(import_node_path3.dirname(filePath), { recursive: true });
+    await import_promises.writeFile(`${filePath}.part`, bytes);
+    await import_promises.rename(`${filePath}.part`, filePath);
   }
 }
 function chatName(bbChat, contactIndex) {
@@ -7266,12 +7303,18 @@ function messageText(bbMessage) {
 }
 function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const rawSender = bbMessage.handle?.address || "";
+  const attachments = (bbMessage.attachments || []).map((a) => ({
+    guid: a.guid,
+    mime: a.mimeType || "",
+    name: a.transferName || ""
+  }));
   return {
     guid: bbMessage.guid,
     text: messageText(bbMessage),
     ts: bbMessage.dateCreated ?? bbMessage.dateDelivered ?? Date.now(),
     fromMe: !!bbMessage.isFromMe,
     sender: bbMessage.isFromMe ? "" : contactIndex.resolve(rawSender) || rawSender,
+    ...attachments.length ? { attachments } : {},
     ...bbMessage.tempGuid ? { tempId: bbMessage.tempGuid } : {}
   };
 }
@@ -7299,6 +7342,27 @@ function pushState() {
   bus.broadcast(state());
 }
 var session = null;
+var attachmentDownloads = new Map;
+async function ensureAttachment(guid, size = "thumbnail") {
+  const filePath = attachmentPath(guid, size === "full" ? ".full" : "");
+  if (import_node_fs4.existsSync(filePath))
+    return filePath;
+  const key = `${guid}:${size}`;
+  let download = attachmentDownloads.get(key);
+  if (!download) {
+    download = session.downloadAttachment(guid, filePath, { thumbnail: size !== "full" }).finally(() => attachmentDownloads.delete(key));
+    attachmentDownloads.set(key, download);
+  }
+  await download;
+  return filePath;
+}
+async function upgradePreview(guid, previewPath) {
+  try {
+    await import_promises2.copyFile(await ensureAttachment(guid, "full"), previewPath);
+  } catch (err) {
+    logger.warn("preview upgrade failed, viewer keeps the thumbnail", { guid, err: err.message });
+  }
+}
 if (config.ok) {
   session = new BlueBubblesSession(config);
   session.onConnection = (nextConnection, error) => {
@@ -7360,6 +7424,42 @@ async function handleCommand(payload, reply) {
         reply({ t: "ack", for: "send", chatGuid: payload.chatGuid, tempId: payload.tempId, guid: sent.guid || "", ok: true });
       } catch (err) {
         reply({ t: "ack", for: "send", chatGuid: payload.chatGuid, tempId: payload.tempId, guid: "", ok: false, message: err.message });
+      }
+      return;
+    case "attachment":
+      if (!config.ok) {
+        reply({ t: "error", for: "attachment", guid: payload.guid || "", message: lastError });
+        return;
+      }
+      if (!payload.guid) {
+        reply({ t: "error", for: "attachment", guid: "", message: "guid required" });
+        return;
+      }
+      try {
+        reply({ t: "attachment", guid: payload.guid, path: await ensureAttachment(payload.guid) });
+      } catch (err) {
+        reply({ t: "error", for: "attachment", guid: payload.guid, message: err.message });
+      }
+      return;
+    case "preview":
+      if (!config.ok) {
+        reply({ t: "error", for: "preview", guid: payload.guid || "", message: lastError });
+        return;
+      }
+      if (!payload.guid) {
+        reply({ t: "error", for: "preview", guid: "", message: "guid required" });
+        return;
+      }
+      try {
+        const previewPath = attachmentPath(payload.guid, ".preview");
+        const fullPath = attachmentPath(payload.guid, ".full");
+        const haveFull = import_node_fs4.existsSync(fullPath);
+        await import_promises2.copyFile(haveFull ? fullPath : await ensureAttachment(payload.guid), previewPath);
+        reply({ t: "preview", guid: payload.guid, path: previewPath });
+        if (!haveFull)
+          upgradePreview(payload.guid, previewPath);
+      } catch (err) {
+        reply({ t: "error", for: "preview", guid: payload.guid, message: err.message });
       }
       return;
     case "read":

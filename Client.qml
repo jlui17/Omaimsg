@@ -34,6 +34,12 @@ Item {
   property string activeChatGuid: ""
   property var activeMessages: []
 
+  // Attachment guid -> file:// URL of the daemon-downloaded file, plus the
+  // in-flight set. Both are replaced wholesale on every change so delegate
+  // bindings that index into them re-evaluate.
+  property var attachmentPaths: ({})
+  property var attachmentPending: ({})
+
   // Whether the daemon is actually reachable.
   //
   // `Socket.connected` cannot answer this: it reads back `true` while a connect
@@ -85,6 +91,36 @@ Item {
   // frame, so nothing is mirrored locally here.
   function setPinned(chatGuid, pinned) {
     return request({ t: "pin", chatGuid: chatGuid, pinned: pinned === true })
+  }
+
+  // Idempotent per guid: delegates call this on creation, so a re-rendered
+  // thread re-requests freely and the cached path or pending flag absorbs it.
+  function requestAttachment(guid) {
+    if (!guid || !guid.length) return false
+    if (root.attachmentPaths[guid] || root.attachmentPending[guid]) return true
+    if (!request({ t: "attachment", guid: guid })) return false
+    var pending = Object.assign({}, root.attachmentPending)
+    pending[guid] = true
+    root.attachmentPending = pending
+    return true
+  }
+
+  function settleAttachment(guid, path) {
+    if (!guid.length) return
+    var pending = Object.assign({}, root.attachmentPending)
+    delete pending[guid]
+    root.attachmentPending = pending
+    if (!path.length) return
+    var paths = Object.assign({}, root.attachmentPaths)
+    paths[guid] = "file://" + path
+    root.attachmentPaths = paths
+  }
+
+  // No pending-dedupe like requestAttachment: each click means "open the
+  // viewer again", and the daemon serves warm requests from its caches.
+  function requestPreview(guid) {
+    if (!guid || !guid.length) return false
+    return request({ t: "preview", guid: guid })
   }
 
   function openChat(chatGuid, limit) {
@@ -229,6 +265,9 @@ Item {
       root.retryCount = 0
       root.lastFrameMs = Date.now()
       retryTimer.stop()
+      // Requests in flight across a reconnect got no reply and never will;
+      // dropping the flags lets a re-rendered thread ask again.
+      root.attachmentPending = {}
       root.refresh()
     } else {
       root.linkUp = false
@@ -295,7 +334,18 @@ Item {
         }
         break
 
+      case "attachment":
+        root.settleAttachment(frame.guid || "", frame.path || "")
+        break
+
+      case "preview":
+        if (frame.guid && frame.path) Quickshell.execDetached(["xdg-open", frame.path])
+        break
+
       case "error":
+        // A failed download must clear its pending flag, or the image can
+        // never be re-requested for the rest of the session.
+        if (frame.for === "attachment") root.settleAttachment(frame.guid || "", "")
         root.commandFailed(frame.for || "", frame.message || "Unknown daemon error")
         break
     }
