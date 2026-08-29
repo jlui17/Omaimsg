@@ -29,6 +29,7 @@ Item {
   property int unread: 0
   property var chats: []
   property int chatsEpoch: 0
+  property double lastChatsMs: 0
   property string lastSocketError: ""
 
   property string activeChatGuid: ""
@@ -220,6 +221,12 @@ Item {
     return false
   }
 
+  // Infinity for a list that has never landed, so a caller gating on age always
+  // fetches the first one.
+  function chatsAgeMs() {
+    return root.lastChatsMs > 0 ? Date.now() - root.lastChatsMs : Infinity
+  }
+
   function setChats(list) {
     root.chats = list || []
     root.chatsEpoch = root.chatsEpoch + 1
@@ -284,8 +291,11 @@ Item {
       root.lastFrameMs = Date.now()
       retryTimer.stop()
       // Requests in flight across a reconnect got no reply and never will;
-      // dropping the flags lets a re-rendered thread ask again.
+      // dropping the flags lets a re-rendered thread ask again. The chat list
+      // is aged out for the same reason: pushes that landed while the link was
+      // down were never seen, so it cannot be trusted as fresh.
       root.attachmentPending = {}
+      root.lastChatsMs = 0
       root.refresh()
     } else {
       root.linkUp = false
@@ -321,6 +331,7 @@ Item {
         break
 
       case "chats":
+        root.lastChatsMs = Date.now()
         root.setChats(frame.chats || [])
         if (frame.unread !== undefined) root.unread = frame.unread || 0
         break
