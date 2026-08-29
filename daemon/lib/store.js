@@ -1,5 +1,3 @@
-import { normalizeChat } from './bluebubbles.js'
-import { EMPTY_CONTACT_INDEX } from './contacts.js'
 import { PinStore } from './pins.js'
 
 // Daemon-owned chat cache and unread counts. Unread is in-memory only, per
@@ -48,16 +46,16 @@ export class Store {
     return total
   }
 
-  // Applies a BlueBubbles chat embedded on a message push (name/last message
-  // may be new to us if the chat was never fetched via `chats`).
-  upsertFromMessage(bbChat, message, contactIndex = EMPTY_CONTACT_INDEX) {
-    const existing = this.chats.get(bbChat.guid)
-    const chat = existing || { ...normalizeChat(bbChat, contactIndex), pinned: this.pins.pinned.has(bbChat.guid) }
-    chat.name = bbChat.displayName || chat.name
-    chat.isGroup = (bbChat.participants?.length || 0) > 1
+  // The chat pushed alongside a message may be one we have never fetched via
+  // `chats`, so it is merged in rather than looked up.
+  upsertFromMessage(pushedChat, message) {
+    const existing = this.chats.get(pushedChat.guid)
+    const chat = existing || { ...pushedChat, pinned: this.pins.pinned.has(pushedChat.guid) }
+    chat.name = pushedChat.name || chat.name
+    chat.isGroup = pushedChat.isGroup
     chat.lastMessage = { text: message.text, ts: message.ts, fromMe: message.fromMe }
     if (!message.fromMe) chat.unread = (chat.unread || 0) + 1
-    this.chats.set(bbChat.guid, chat)
+    this.chats.set(pushedChat.guid, chat)
     return chat
   }
 

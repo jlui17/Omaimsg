@@ -319,8 +319,8 @@ var require_XMLHttpRequest = __commonJS({
           };
           request = doRequest(options, responseHandler).on("error", errorHandler);
           if (opts.autoUnref) {
-            request.on("socket", (socket2) => {
-              socket2.unref();
+            request.on("socket", (socket) => {
+              socket.unref();
             });
           }
           if (data) {
@@ -2545,13 +2545,13 @@ var require_sender = __commonJS({
        * @param {Function} [generateMask] The function used to generate the masking
        *     key
        */
-      constructor(socket2, extensions, generateMask) {
+      constructor(socket, extensions, generateMask) {
         this._extensions = extensions || {};
         if (generateMask) {
           this._generateMask = generateMask;
           this._maskBuffer = Buffer.alloc(4);
         }
-        this._socket = socket2;
+        this._socket = socket;
         this._firstFragment = true;
         this._compress = false;
         this._bufferedBytes = 0;
@@ -3570,7 +3570,7 @@ var require_websocket = __commonJS({
        *     not to skip UTF-8 validation for text and close messages
        * @private
        */
-      setSocket(socket2, head, options) {
+      setSocket(socket, head, options) {
         const receiver = new Receiver2({
           allowSynchronousEvents: options.allowSynchronousEvents,
           binaryType: this.binaryType,
@@ -3581,13 +3581,13 @@ var require_websocket = __commonJS({
           maxPayload: options.maxPayload,
           skipUTF8Validation: options.skipUTF8Validation
         });
-        const sender = new Sender2(socket2, this._extensions, options.generateMask);
+        const sender = new Sender2(socket, this._extensions, options.generateMask);
         this._receiver = receiver;
         this._sender = sender;
-        this._socket = socket2;
+        this._socket = socket;
         receiver[kWebSocket] = this;
         sender[kWebSocket] = this;
-        socket2[kWebSocket] = this;
+        socket[kWebSocket] = this;
         receiver.on("conclude", receiverOnConclude);
         receiver.on("drain", receiverOnDrain);
         receiver.on("error", receiverOnError);
@@ -3595,13 +3595,13 @@ var require_websocket = __commonJS({
         receiver.on("ping", receiverOnPing);
         receiver.on("pong", receiverOnPong);
         sender.onerror = senderOnError;
-        if (socket2.setTimeout) socket2.setTimeout(0);
-        if (socket2.setNoDelay) socket2.setNoDelay();
-        if (head.length > 0) socket2.unshift(head);
-        socket2.on("close", socketOnClose);
-        socket2.on("data", socketOnData);
-        socket2.on("end", socketOnEnd);
-        socket2.on("error", socketOnError);
+        if (socket.setTimeout) socket.setTimeout(0);
+        if (socket.setNoDelay) socket.setNoDelay();
+        if (head.length > 0) socket.unshift(head);
+        socket.on("close", socketOnClose);
+        socket.on("data", socketOnData);
+        socket.on("end", socketOnEnd);
+        socket.on("error", socketOnError);
         this._readyState = _WebSocket.OPEN;
         this.emit("open");
       }
@@ -4058,18 +4058,18 @@ var require_websocket = __commonJS({
           );
         }
       });
-      req.on("upgrade", (res, socket2, head) => {
+      req.on("upgrade", (res, socket, head) => {
         websocket.emit("upgrade", res);
         if (websocket.readyState !== WebSocket2.CONNECTING) return;
         req = websocket._req = null;
         const upgrade = res.headers.upgrade;
         if (upgrade === void 0 || upgrade.toLowerCase() !== "websocket") {
-          abortHandshake(websocket, socket2, "Invalid Upgrade header");
+          abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
         const digest = createHash("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
-          abortHandshake(websocket, socket2, "Invalid Sec-WebSocket-Accept header");
+          abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
         }
         const serverProt = res.headers["sec-websocket-protocol"];
@@ -4084,7 +4084,7 @@ var require_websocket = __commonJS({
           protError = "Server sent no subprotocol";
         }
         if (protError) {
-          abortHandshake(websocket, socket2, protError);
+          abortHandshake(websocket, socket, protError);
           return;
         }
         if (serverProt) websocket._protocol = serverProt;
@@ -4092,7 +4092,7 @@ var require_websocket = __commonJS({
         if (secWebSocketExtensions !== void 0) {
           if (!perMessageDeflate) {
             const message = "Server sent a Sec-WebSocket-Extensions header but no extension was requested";
-            abortHandshake(websocket, socket2, message);
+            abortHandshake(websocket, socket, message);
             return;
           }
           let extensions;
@@ -4100,25 +4100,25 @@ var require_websocket = __commonJS({
             extensions = parse3(secWebSocketExtensions);
           } catch (err) {
             const message = "Invalid Sec-WebSocket-Extensions header";
-            abortHandshake(websocket, socket2, message);
+            abortHandshake(websocket, socket, message);
             return;
           }
           const extensionNames = Object.keys(extensions);
           if (extensionNames.length !== 1 || extensionNames[0] !== PerMessageDeflate2.extensionName) {
             const message = "Server indicated an extension that was not requested";
-            abortHandshake(websocket, socket2, message);
+            abortHandshake(websocket, socket, message);
             return;
           }
           try {
             perMessageDeflate.accept(extensions[PerMessageDeflate2.extensionName]);
           } catch (err) {
             const message = "Invalid Sec-WebSocket-Extensions header";
-            abortHandshake(websocket, socket2, message);
+            abortHandshake(websocket, socket, message);
             return;
           }
           websocket._extensions[PerMessageDeflate2.extensionName] = perMessageDeflate;
         }
-        websocket.setSocket(socket2, head, {
+        websocket.setSocket(socket, head, {
           allowSynchronousEvents: opts.allowSynchronousEvents,
           generateMask: opts.generateMask,
           maxBufferedChunks: opts.maxBufferedChunks,
@@ -4537,8 +4537,8 @@ var require_websocket_server = __commonJS({
           this._removeListeners = addListeners(this._server, {
             listening: this.emit.bind(this, "listening"),
             error: this.emit.bind(this, "error"),
-            upgrade: (req, socket2, head) => {
-              this.handleUpgrade(req, socket2, head, emitConnection);
+            upgrade: (req, socket, head) => {
+              this.handleUpgrade(req, socket, head, emitConnection);
             }
           });
         }
@@ -4633,35 +4633,35 @@ var require_websocket_server = __commonJS({
        * @param {Function} cb Callback
        * @public
        */
-      handleUpgrade(req, socket2, head, cb) {
-        socket2.on("error", socketOnError);
+      handleUpgrade(req, socket, head, cb) {
+        socket.on("error", socketOnError);
         const key = req.headers["sec-websocket-key"];
         const upgrade = req.headers.upgrade;
         const version = +req.headers["sec-websocket-version"];
         if (req.method !== "GET") {
           const message = "Invalid HTTP method";
-          abortHandshakeOrEmitwsClientError(this, req, socket2, 405, message);
+          abortHandshakeOrEmitwsClientError(this, req, socket, 405, message);
           return;
         }
         if (upgrade === void 0 || upgrade.toLowerCase() !== "websocket") {
           const message = "Invalid Upgrade header";
-          abortHandshakeOrEmitwsClientError(this, req, socket2, 400, message);
+          abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
           return;
         }
         if (key === void 0 || !keyRegex.test(key)) {
           const message = "Missing or invalid Sec-WebSocket-Key header";
-          abortHandshakeOrEmitwsClientError(this, req, socket2, 400, message);
+          abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
           return;
         }
         if (version !== 13 && version !== 8) {
           const message = "Missing or invalid Sec-WebSocket-Version header";
-          abortHandshakeOrEmitwsClientError(this, req, socket2, 400, message, {
+          abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
             "Sec-WebSocket-Version": "13, 8"
           });
           return;
         }
         if (!this.shouldHandle(req)) {
-          abortHandshake(socket2, 400);
+          abortHandshake(socket, 400);
           return;
         }
         const secWebSocketProtocol = req.headers["sec-websocket-protocol"];
@@ -4671,7 +4671,7 @@ var require_websocket_server = __commonJS({
             protocols = subprotocol2.parse(secWebSocketProtocol);
           } catch (err) {
             const message = "Invalid Sec-WebSocket-Protocol header";
-            abortHandshakeOrEmitwsClientError(this, req, socket2, 400, message);
+            abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
             return;
           }
         }
@@ -4691,7 +4691,7 @@ var require_websocket_server = __commonJS({
             }
           } catch (err) {
             const message = "Invalid or unacceptable Sec-WebSocket-Extensions header";
-            abortHandshakeOrEmitwsClientError(this, req, socket2, 400, message);
+            abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
             return;
           }
         }
@@ -4704,23 +4704,23 @@ var require_websocket_server = __commonJS({
           if (this.options.verifyClient.length === 2) {
             this.options.verifyClient(info, (verified, code, message, headers) => {
               if (!verified) {
-                return abortHandshake(socket2, code || 401, message, headers);
+                return abortHandshake(socket, code || 401, message, headers);
               }
               this.completeUpgrade(
                 extensions,
                 key,
                 protocols,
                 req,
-                socket2,
+                socket,
                 head,
                 cb
               );
             });
             return;
           }
-          if (!this.options.verifyClient(info)) return abortHandshake(socket2, 401);
+          if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
         }
-        this.completeUpgrade(extensions, key, protocols, req, socket2, head, cb);
+        this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
       }
       /**
        * Upgrade the connection to WebSocket.
@@ -4735,14 +4735,14 @@ var require_websocket_server = __commonJS({
        * @throws {Error} If called more than once with the same socket
        * @private
        */
-      completeUpgrade(extensions, key, protocols, req, socket2, head, cb) {
-        if (!socket2.readable || !socket2.writable) return socket2.destroy();
-        if (socket2[kWebSocket]) {
+      completeUpgrade(extensions, key, protocols, req, socket, head, cb) {
+        if (!socket.readable || !socket.writable) return socket.destroy();
+        if (socket[kWebSocket]) {
           throw new Error(
             "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration"
           );
         }
-        if (this._state > RUNNING) return abortHandshake(socket2, 503);
+        if (this._state > RUNNING) return abortHandshake(socket, 503);
         const digest = createHash("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
@@ -4767,9 +4767,9 @@ var require_websocket_server = __commonJS({
           ws._extensions = extensions;
         }
         this.emit("headers", headers, req);
-        socket2.write(headers.concat("\r\n").join("\r\n"));
-        socket2.removeListener("error", socketOnError);
-        ws.setSocket(socket2, head, {
+        socket.write(headers.concat("\r\n").join("\r\n"));
+        socket.removeListener("error", socketOnError);
+        ws.setSocket(socket, head, {
           allowSynchronousEvents: this.options.allowSynchronousEvents,
           maxBufferedChunks: this.options.maxBufferedChunks,
           maxFragments: this.options.maxFragments,
@@ -4804,7 +4804,7 @@ var require_websocket_server = __commonJS({
     function socketOnError() {
       this.destroy();
     }
-    function abortHandshake(socket2, code, message, headers) {
+    function abortHandshake(socket, code, message, headers) {
       message = message || http.STATUS_CODES[code];
       headers = {
         Connection: "close",
@@ -4812,23 +4812,309 @@ var require_websocket_server = __commonJS({
         "Content-Length": Buffer.byteLength(message),
         ...headers
       };
-      socket2.once("finish", socket2.destroy);
-      socket2.end(
+      socket.once("finish", socket.destroy);
+      socket.end(
         `HTTP/1.1 ${code} ${http.STATUS_CODES[code]}\r
 ` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
-    function abortHandshakeOrEmitwsClientError(server, req, socket2, code, message, headers) {
+    function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
       if (server.listenerCount("wsClientError")) {
         const err = new Error(message);
         Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
-        server.emit("wsClientError", err, socket2, req);
+        server.emit("wsClientError", err, socket, req);
       } else {
-        abortHandshake(socket2, code, message, headers);
+        abortHandshake(socket, code, message, headers);
       }
     }
   }
 });
+
+// daemon/lib/config.js
+var import_node_fs = require("node:fs");
+
+// daemon/lib/paths.js
+var import_node_path = require("node:path");
+var import_node_os = require("node:os");
+var socketPath = process.env.OMAIMSG_SOCKET || (0, import_node_path.join)(process.env.XDG_RUNTIME_DIR || "/tmp", "omaimsg.sock");
+var configPath = process.env.OMAIMSG_CONFIG || (0, import_node_path.join)((0, import_node_os.homedir)(), ".config", "omaimsg", "config.json");
+var pinsPath = (0, import_node_path.join)(
+  process.env.XDG_STATE_HOME || (0, import_node_path.join)((0, import_node_os.homedir)(), ".local", "state"),
+  "omaimsg",
+  "pins.json"
+);
+
+// daemon/lib/logger.js
+var PREFIX = "omaimsg-daemon:";
+function line(level, msg, extra) {
+  const suffix = extra !== void 0 ? ` ${JSON.stringify(extra)}` : "";
+  process.stderr.write(`${PREFIX} [${level}] ${msg}${suffix}
+`);
+}
+var logger = {
+  info: (msg, extra) => line("info", msg, extra),
+  warn: (msg, extra) => line("warn", msg, extra),
+  error: (msg, extra) => line("error", msg, extra),
+  debug: (msg, extra) => {
+    if (process.env.OMAIMSG_DEBUG) line("debug", msg, extra);
+  }
+};
+
+// daemon/lib/config.js
+var DEFAULT_METHOD = "apple-script";
+function loadConfig() {
+  let raw;
+  try {
+    raw = (0, import_node_fs.readFileSync)(configPath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { ok: false, error: `no config file at ${configPath}` };
+    }
+    return { ok: false, error: `could not read ${configPath}: ${err.message}` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, error: `invalid JSON in ${configPath}: ${err.message}` };
+  }
+  if (!parsed.serverUrl || !parsed.password) {
+    return { ok: false, error: `${configPath} must set "serverUrl" and "password"` };
+  }
+  return {
+    ok: true,
+    serverUrl: String(parsed.serverUrl).replace(/\/+$/, ""),
+    password: String(parsed.password),
+    method: parsed.method === "private-api" ? "private-api" : DEFAULT_METHOD
+  };
+}
+function logConfigOutcome(config2) {
+  if (config2.ok) {
+    logger.info(`config loaded from ${configPath}`, { serverUrl: config2.serverUrl, method: config2.method });
+  } else {
+    logger.warn(`config: ${config2.error}`);
+  }
+}
+
+// daemon/lib/bus.js
+var import_node_net = __toESM(require("node:net"), 1);
+var import_node_fs2 = require("node:fs");
+var MAX_LINE_BYTES = 1024 * 512;
+var Bus = class {
+  constructor(socketPath2) {
+    this.socketPath = socketPath2;
+    this.clients = /* @__PURE__ */ new Set();
+    this.server = null;
+    this.onCommand = null;
+    this.snapshot = null;
+  }
+  async listen() {
+    await this._clearStaleSocket();
+    this.server = import_node_net.default.createServer((socket) => this._accept(socket));
+    this.server.on("error", (err) => logger.error("bus: server error", { err: err.message }));
+    await new Promise((resolvePromise, rejectPromise) => {
+      this.server.once("error", rejectPromise);
+      this.server.listen(this.socketPath, () => {
+        this.server.off("error", rejectPromise);
+        resolvePromise();
+      });
+    });
+    try {
+      (0, import_node_fs2.chmodSync)(this.socketPath, 384);
+    } catch (err) {
+      logger.warn("bus: could not tighten socket permissions", { err: err.message });
+    }
+    logger.info("bus: listening", { socket: this.socketPath });
+  }
+  // A socket file left behind by a killed daemon is indistinguishable from a
+  // live one by name alone, so probe it: a refused connect means it is dead.
+  async _clearStaleSocket() {
+    const alive = await new Promise((resolvePromise) => {
+      const probe = import_node_net.default.connect(this.socketPath);
+      const done = (result) => {
+        probe.destroy();
+        resolvePromise(result);
+      };
+      probe.once("connect", () => done(true));
+      probe.once("error", () => done(false));
+      setTimeout(() => done(false), 500).unref?.();
+    });
+    if (alive) {
+      const err = new Error(`another omaimsg daemon is already listening on ${this.socketPath}`);
+      err.code = "EALREADYRUNNING";
+      throw err;
+    }
+    try {
+      (0, import_node_fs2.unlinkSync)(this.socketPath);
+      logger.info("bus: removed stale socket");
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+  }
+  _accept(socket) {
+    socket.setNoDelay(true);
+    const client = { socket, buffer: "" };
+    this.clients.add(client);
+    logger.debug("bus: client connected", { clients: this.clients.size });
+    socket.on("data", (chunk) => {
+      client.buffer += chunk.toString("utf8");
+      if (client.buffer.length > MAX_LINE_BYTES) {
+        logger.warn("bus: oversized frame, dropping client");
+        socket.destroy();
+        return;
+      }
+      let index = client.buffer.indexOf("\n");
+      while (index !== -1) {
+        const line2 = client.buffer.slice(0, index).trim();
+        client.buffer = client.buffer.slice(index + 1);
+        if (line2) this._dispatch(client, line2);
+        index = client.buffer.indexOf("\n");
+      }
+    });
+    const drop = () => {
+      this.clients.delete(client);
+      logger.debug("bus: client gone", { clients: this.clients.size });
+    };
+    socket.on("close", drop);
+    socket.on("error", drop);
+    if (this.snapshot) this.sendTo(client, this.snapshot());
+  }
+  _dispatch(client, line2) {
+    let payload;
+    try {
+      payload = JSON.parse(line2);
+    } catch {
+      logger.warn("bus: unparseable command", { line: line2.slice(0, 120) });
+      return;
+    }
+    if (!payload || typeof payload !== "object") return;
+    logger.debug("bus: command", { t: payload.t });
+    Promise.resolve().then(() => this.onCommand?.(payload, (response) => this.sendTo(client, response))).catch((err) => {
+      logger.warn("bus: command failed", { err: err.message, t: payload.t });
+      this.sendTo(client, { t: "error", for: payload.t || "", message: String(err?.message || err) });
+    });
+  }
+  sendTo(client, payload) {
+    if (!payload) return;
+    try {
+      client.socket.write(`${JSON.stringify(payload)}
+`);
+    } catch (err) {
+      logger.debug("bus: write failed", { err: err.message });
+    }
+  }
+  broadcast(payload) {
+    if (!payload || this.clients.size === 0) return;
+    const line2 = `${JSON.stringify(payload)}
+`;
+    for (const client of this.clients) {
+      try {
+        client.socket.write(line2);
+      } catch (err) {
+        logger.debug("bus: broadcast write failed", { err: err.message });
+      }
+    }
+  }
+  close() {
+    for (const client of this.clients) client.socket.destroy();
+    this.clients.clear();
+    this.server?.close();
+    try {
+      (0, import_node_fs2.unlinkSync)(this.socketPath);
+    } catch {
+    }
+  }
+};
+
+// daemon/lib/pins.js
+var import_node_fs3 = require("node:fs");
+var import_node_path2 = require("node:path");
+var PinStore = class {
+  constructor(path = pinsPath) {
+    this.path = path;
+    this.pinned = new Set(this._load());
+  }
+  _load() {
+    try {
+      const guids = JSON.parse((0, import_node_fs3.readFileSync)(this.path, "utf8"));
+      return Array.isArray(guids) ? guids : [];
+    } catch (err) {
+      if (err.code !== "ENOENT") logger.warn("pins: could not read pins.json", { err: err.message });
+      return [];
+    }
+  }
+  _save() {
+    try {
+      (0, import_node_fs3.mkdirSync)((0, import_node_path2.dirname)(this.path), { recursive: true });
+      (0, import_node_fs3.writeFileSync)(this.path, JSON.stringify([...this.pinned]));
+    } catch (err) {
+      logger.warn("pins: could not write pins.json", { err: err.message });
+    }
+  }
+  set(chatGuid, pinned) {
+    if (pinned) this.pinned.add(chatGuid);
+    else this.pinned.delete(chatGuid);
+    this._save();
+  }
+};
+
+// daemon/lib/store.js
+var Store = class {
+  constructor() {
+    this.chats = /* @__PURE__ */ new Map();
+    this.pins = new PinStore();
+  }
+  setPinned(chatGuid, pinned) {
+    this.pins.set(chatGuid, pinned);
+    const chat = this.chats.get(chatGuid);
+    if (chat) chat.pinned = pinned;
+  }
+  replaceChats(normalizedChats) {
+    for (const chat of normalizedChats) {
+      const existing = this.chats.get(chat.guid);
+      this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) });
+    }
+    return this.chatList();
+  }
+  // A Map's iteration order is insertion order and does NOT change when an
+  // existing key is re-set, so returning `this.chats.values()` directly
+  // would freeze the list in whatever order chats were first seen in,
+  // regardless of new messages arriving. Sort fresh every time instead of
+  // trusting the server's `sort` or the map's order.
+  chatList() {
+    return [...this.chats.values()].sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      const at = a.lastMessage?.ts;
+      const bt = b.lastMessage?.ts;
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return bt - at;
+    });
+  }
+  totalUnread() {
+    let total = 0;
+    for (const chat of this.chats.values()) total += chat.unread;
+    return total;
+  }
+  // The chat pushed alongside a message may be one we have never fetched via
+  // `chats`, so it is merged in rather than looked up.
+  upsertFromMessage(pushedChat, message) {
+    const existing = this.chats.get(pushedChat.guid);
+    const chat = existing || { ...pushedChat, pinned: this.pins.pinned.has(pushedChat.guid) };
+    chat.name = pushedChat.name || chat.name;
+    chat.isGroup = pushedChat.isGroup;
+    chat.lastMessage = { text: message.text, ts: message.ts, fromMe: message.fromMe };
+    if (!message.fromMe) chat.unread = (chat.unread || 0) + 1;
+    this.chats.set(pushedChat.guid, chat);
+    return chat;
+  }
+  markRead(chatGuid) {
+    const chat = this.chats.get(chatGuid);
+    if (!chat) return;
+    chat.unread = 0;
+  }
+};
 
 // node_modules/engine.io-client/build/esm-debug/transports/polling-xhr.node.js
 var XMLHttpRequestModule = __toESM(require_XMLHttpRequest(), 1);
@@ -8024,11 +8310,11 @@ var Manager = class extends import_component_emitter6.Emitter {
       return this;
     debug10("opening %s", this.uri);
     this.engine = new Socket(this.uri, this.opts);
-    const socket2 = this.engine;
+    const socket = this.engine;
     const self = this;
     this._readyState = "opening";
     this.skipReconnect = false;
-    const openSubDestroy = on(socket2, "open", function() {
+    const openSubDestroy = on(socket, "open", function() {
       self.onopen();
       fn && fn();
     });
@@ -8043,7 +8329,7 @@ var Manager = class extends import_component_emitter6.Emitter {
         this.maybeReconnectOnOpen();
       }
     };
-    const errorSub = on(socket2, "error", onError);
+    const errorSub = on(socket, "error", onError);
     if (false !== this._timeout) {
       const timeout = this._timeout;
       debug10("connect attempt will timeout after %d", timeout);
@@ -8051,7 +8337,7 @@ var Manager = class extends import_component_emitter6.Emitter {
         debug10("connect attempt timed out after %d", timeout);
         openSubDestroy();
         onError(new Error("timeout"));
-        socket2.close();
+        socket.close();
       }, timeout);
       if (this.opts.autoUnref) {
         timer.unref();
@@ -8083,12 +8369,12 @@ var Manager = class extends import_component_emitter6.Emitter {
     this.cleanup();
     this._readyState = "open";
     this.emitReserved("open");
-    const socket2 = this.engine;
+    const socket = this.engine;
     this.subs.push(
-      on(socket2, "ping", this.onping.bind(this)),
-      on(socket2, "data", this.ondata.bind(this)),
-      on(socket2, "error", this.onerror.bind(this)),
-      on(socket2, "close", this.onclose.bind(this)),
+      on(socket, "ping", this.onping.bind(this)),
+      on(socket, "data", this.ondata.bind(this)),
+      on(socket, "error", this.onerror.bind(this)),
+      on(socket, "close", this.onclose.bind(this)),
       // @ts-ignore
       on(this.decoder, "decoded", this.ondecoded.bind(this))
     );
@@ -8139,14 +8425,14 @@ var Manager = class extends import_component_emitter6.Emitter {
    * @public
    */
   socket(nsp, opts) {
-    let socket2 = this.nsps[nsp];
-    if (!socket2) {
-      socket2 = new Socket2(this, nsp, opts);
-      this.nsps[nsp] = socket2;
-    } else if (this._autoConnect && !socket2.active) {
-      socket2.connect();
+    let socket = this.nsps[nsp];
+    if (!socket) {
+      socket = new Socket2(this, nsp, opts);
+      this.nsps[nsp] = socket;
+    } else if (this._autoConnect && !socket.active) {
+      socket.connect();
     }
-    return socket2;
+    return socket;
   }
   /**
    * Called upon a socket close.
@@ -8154,11 +8440,11 @@ var Manager = class extends import_component_emitter6.Emitter {
    * @param socket
    * @private
    */
-  _destroy(socket2) {
+  _destroy(socket) {
     const nsps = Object.keys(this.nsps);
     for (const nsp of nsps) {
-      const socket3 = this.nsps[nsp];
-      if (socket3.active) {
+      const socket2 = this.nsps[nsp];
+      if (socket2.active) {
         debug10("socket %s is still active, skipping close", nsp);
         return;
       }
@@ -8326,202 +8612,6 @@ Object.assign(lookup, {
   connect: lookup
 });
 
-// daemon/lib/config.js
-var import_node_fs = require("node:fs");
-
-// daemon/lib/paths.js
-var import_node_path = require("node:path");
-var import_node_os = require("node:os");
-var socketPath = process.env.OMAIMSG_SOCKET || (0, import_node_path.join)(process.env.XDG_RUNTIME_DIR || "/tmp", "omaimsg.sock");
-var configPath = process.env.OMAIMSG_CONFIG || (0, import_node_path.join)((0, import_node_os.homedir)(), ".config", "omaimsg", "config.json");
-var pinsPath = (0, import_node_path.join)(
-  process.env.XDG_STATE_HOME || (0, import_node_path.join)((0, import_node_os.homedir)(), ".local", "state"),
-  "omaimsg",
-  "pins.json"
-);
-
-// daemon/lib/logger.js
-var PREFIX = "omaimsg-daemon:";
-function line(level, msg, extra) {
-  const suffix = extra !== void 0 ? ` ${JSON.stringify(extra)}` : "";
-  process.stderr.write(`${PREFIX} [${level}] ${msg}${suffix}
-`);
-}
-var logger = {
-  info: (msg, extra) => line("info", msg, extra),
-  warn: (msg, extra) => line("warn", msg, extra),
-  error: (msg, extra) => line("error", msg, extra),
-  debug: (msg, extra) => {
-    if (process.env.OMAIMSG_DEBUG) line("debug", msg, extra);
-  }
-};
-
-// daemon/lib/config.js
-var DEFAULT_METHOD = "apple-script";
-function loadConfig() {
-  let raw;
-  try {
-    raw = (0, import_node_fs.readFileSync)(configPath, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") {
-      return { ok: false, error: `no config file at ${configPath}` };
-    }
-    return { ok: false, error: `could not read ${configPath}: ${err.message}` };
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return { ok: false, error: `invalid JSON in ${configPath}: ${err.message}` };
-  }
-  if (!parsed.serverUrl || !parsed.password) {
-    return { ok: false, error: `${configPath} must set "serverUrl" and "password"` };
-  }
-  return {
-    ok: true,
-    serverUrl: String(parsed.serverUrl).replace(/\/+$/, ""),
-    password: String(parsed.password),
-    method: parsed.method === "private-api" ? "private-api" : DEFAULT_METHOD
-  };
-}
-function logConfigOutcome(config2) {
-  if (config2.ok) {
-    logger.info(`config loaded from ${configPath}`, { serverUrl: config2.serverUrl, method: config2.method });
-  } else {
-    logger.warn(`config: ${config2.error}`);
-  }
-}
-
-// daemon/lib/bus.js
-var import_node_net = __toESM(require("node:net"), 1);
-var import_node_fs2 = require("node:fs");
-var MAX_LINE_BYTES = 1024 * 512;
-var Bus = class {
-  constructor(socketPath2) {
-    this.socketPath = socketPath2;
-    this.clients = /* @__PURE__ */ new Set();
-    this.server = null;
-    this.onCommand = null;
-    this.snapshot = null;
-  }
-  async listen() {
-    await this._clearStaleSocket();
-    this.server = import_node_net.default.createServer((socket2) => this._accept(socket2));
-    this.server.on("error", (err) => logger.error("bus: server error", { err: err.message }));
-    await new Promise((resolvePromise, rejectPromise) => {
-      this.server.once("error", rejectPromise);
-      this.server.listen(this.socketPath, () => {
-        this.server.off("error", rejectPromise);
-        resolvePromise();
-      });
-    });
-    try {
-      (0, import_node_fs2.chmodSync)(this.socketPath, 384);
-    } catch (err) {
-      logger.warn("bus: could not tighten socket permissions", { err: err.message });
-    }
-    logger.info("bus: listening", { socket: this.socketPath });
-  }
-  // A socket file left behind by a killed daemon is indistinguishable from a
-  // live one by name alone, so probe it: a refused connect means it is dead.
-  async _clearStaleSocket() {
-    const alive = await new Promise((resolvePromise) => {
-      const probe = import_node_net.default.connect(this.socketPath);
-      const done = (result) => {
-        probe.destroy();
-        resolvePromise(result);
-      };
-      probe.once("connect", () => done(true));
-      probe.once("error", () => done(false));
-      setTimeout(() => done(false), 500).unref?.();
-    });
-    if (alive) {
-      const err = new Error(`another omaimsg daemon is already listening on ${this.socketPath}`);
-      err.code = "EALREADYRUNNING";
-      throw err;
-    }
-    try {
-      (0, import_node_fs2.unlinkSync)(this.socketPath);
-      logger.info("bus: removed stale socket");
-    } catch (err) {
-      if (err.code !== "ENOENT") throw err;
-    }
-  }
-  _accept(socket2) {
-    socket2.setNoDelay(true);
-    const client = { socket: socket2, buffer: "" };
-    this.clients.add(client);
-    logger.debug("bus: client connected", { clients: this.clients.size });
-    socket2.on("data", (chunk) => {
-      client.buffer += chunk.toString("utf8");
-      if (client.buffer.length > MAX_LINE_BYTES) {
-        logger.warn("bus: oversized frame, dropping client");
-        socket2.destroy();
-        return;
-      }
-      let index = client.buffer.indexOf("\n");
-      while (index !== -1) {
-        const line2 = client.buffer.slice(0, index).trim();
-        client.buffer = client.buffer.slice(index + 1);
-        if (line2) this._dispatch(client, line2);
-        index = client.buffer.indexOf("\n");
-      }
-    });
-    const drop = () => {
-      this.clients.delete(client);
-      logger.debug("bus: client gone", { clients: this.clients.size });
-    };
-    socket2.on("close", drop);
-    socket2.on("error", drop);
-    if (this.snapshot) this.sendTo(client, this.snapshot());
-  }
-  _dispatch(client, line2) {
-    let payload;
-    try {
-      payload = JSON.parse(line2);
-    } catch {
-      logger.warn("bus: unparseable command", { line: line2.slice(0, 120) });
-      return;
-    }
-    if (!payload || typeof payload !== "object") return;
-    logger.debug("bus: command", { t: payload.t });
-    Promise.resolve().then(() => this.onCommand?.(payload, (response) => this.sendTo(client, response))).catch((err) => {
-      logger.warn("bus: command failed", { err: err.message, t: payload.t });
-      this.sendTo(client, { t: "error", for: payload.t || "", message: String(err?.message || err) });
-    });
-  }
-  sendTo(client, payload) {
-    if (!payload) return;
-    try {
-      client.socket.write(`${JSON.stringify(payload)}
-`);
-    } catch (err) {
-      logger.debug("bus: write failed", { err: err.message });
-    }
-  }
-  broadcast(payload) {
-    if (!payload || this.clients.size === 0) return;
-    const line2 = `${JSON.stringify(payload)}
-`;
-    for (const client of this.clients) {
-      try {
-        client.socket.write(line2);
-      } catch (err) {
-        logger.debug("bus: broadcast write failed", { err: err.message });
-      }
-    }
-  }
-  close() {
-    for (const client of this.clients) client.socket.destroy();
-    this.clients.clear();
-    this.server?.close();
-    try {
-      (0, import_node_fs2.unlinkSync)(this.socketPath);
-    } catch {
-    }
-  }
-};
-
 // daemon/lib/contacts.js
 var STRIP_RE = /[^a-zA-Z0-9]/g;
 var MIN_FUZZY_DIGITS = 7;
@@ -8571,6 +8661,75 @@ var EMPTY_CONTACT_INDEX = new ContactIndex([]);
 // daemon/lib/bluebubbles.js
 var CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200;
 var CHAT_FETCH_CAP = 2e3;
+var BlueBubblesSession = class {
+  constructor(config2) {
+    this.config = config2;
+    this.client = new BlueBubblesClient(config2);
+    this.contacts = EMPTY_CONTACT_INDEX;
+    this.socket = null;
+    this.onConnection = () => {
+    };
+    this.onMessage = () => {
+    };
+  }
+  start() {
+    this.socket = lookup(this.config.serverUrl, {
+      query: { password: this.config.password },
+      reconnectionDelay: 1e3,
+      reconnectionDelayMax: 15e3
+    });
+    this.socket.on("connect", () => {
+      logger.info("bluebubbles: connected");
+      this.onConnection("connected", "");
+      this._refreshContacts();
+    });
+    this.socket.on("disconnect", (reason) => {
+      logger.warn("bluebubbles: disconnected", { reason });
+      if (reason === "io server disconnect") {
+        this.onConnection("error", "BlueBubbles rejected the password");
+      } else {
+        this.onConnection("connecting", reason);
+      }
+    });
+    this.socket.on("connect_error", (err) => {
+      logger.warn("bluebubbles: connect_error", { err: err.message });
+      this.onConnection("connecting", err.message);
+    });
+    this.socket.on("new-message", (payload) => {
+      const bbChat = embeddedChat(payload);
+      if (!bbChat?.guid) {
+        logger.warn("bluebubbles: new-message with no embedded chat, dropping");
+        return;
+      }
+      this.onMessage({
+        chatGuid: bbChat.guid,
+        chat: normalizeChat(bbChat, this.contacts),
+        message: normalizeMessage(payload, this.contacts)
+      });
+    });
+  }
+  close() {
+    this.socket?.close();
+  }
+  async chats() {
+    return this.client.queryAllChats(this.contacts);
+  }
+  async messages(chatGuid, limit) {
+    return this.client.getChatMessages(chatGuid, limit, this.contacts);
+  }
+  async sendText({ chatGuid, text, tempGuid }) {
+    return this.client.sendText({ chatGuid, text, tempGuid });
+  }
+  async _refreshContacts() {
+    try {
+      const contacts = await this.client.getContacts();
+      this.contacts = ContactIndex.fromContacts(contacts);
+      logger.info("bluebubbles: contacts loaded", { contacts: contacts.length });
+    } catch (err) {
+      logger.warn("bluebubbles: contacts fetch failed", { err: err.message });
+    }
+  }
+};
 var BlueBubblesClient = class {
   constructor({ serverUrl, password, method }) {
     this.serverUrl = serverUrl;
@@ -8599,7 +8758,7 @@ var BlueBubblesClient = class {
   // slice (see header note on why that slice can silently drop chats). The
   // client-requested display limit is applied later, after Store re-sorts
   // the full set.
-  async queryAllChats(contactIndex2 = EMPTY_CONTACT_INDEX) {
+  async queryAllChats(contactIndex = EMPTY_CONTACT_INDEX) {
     const all = [];
     let offset = 0;
     while (true) {
@@ -8611,13 +8770,13 @@ var BlueBubblesClient = class {
       if (page.length < CHAT_PAGE_SIZE || all.length >= CHAT_FETCH_CAP) break;
       offset += CHAT_PAGE_SIZE;
     }
-    return all.slice(0, CHAT_FETCH_CAP).map((chat) => normalizeChat(chat, contactIndex2));
+    return all.slice(0, CHAT_FETCH_CAP).map((chat) => normalizeChat(chat, contactIndex));
   }
-  async getChatMessages(chatGuid, limit, contactIndex2 = EMPTY_CONTACT_INDEX) {
+  async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
       query: { limit, sort: "DESC" }
     });
-    return data.map((message) => normalizeMessage(message, contactIndex2)).reverse();
+    return data.map((message) => normalizeMessage(message, contactIndex)).reverse();
   }
   async sendText({ chatGuid, text, tempGuid }) {
     const data = await this._request("/api/v1/message/text", {
@@ -8630,24 +8789,24 @@ var BlueBubblesClient = class {
     return this._request("/api/v1/contact");
   }
 };
-function chatName(bbChat, contactIndex2) {
+function chatName(bbChat, contactIndex) {
   if (bbChat.displayName) return bbChat.displayName;
   const participants = bbChat.participants || [];
   const names = participants.map((p) => {
-    const resolved = contactIndex2.resolve(p.address);
+    const resolved = contactIndex.resolve(p.address);
     return resolved ? resolved.split(" ")[0] : p.address;
   });
   if (names.length === 0) return "";
-  if (names.length === 1) return contactIndex2.resolve(participants[0].address) || names[0];
+  if (names.length === 1) return contactIndex.resolve(participants[0].address) || names[0];
   const shown = names.slice(0, 3);
   const extra = names.length - shown.length;
   const joined = shown.length === 2 ? shown.join(" & ") : shown.slice(0, -1).join(", ") + " & " + shown[shown.length - 1];
   return extra > 0 ? joined + " +" + extra : joined;
 }
-function normalizeChat(bbChat, contactIndex2 = EMPTY_CONTACT_INDEX) {
+function normalizeChat(bbChat, contactIndex = EMPTY_CONTACT_INDEX) {
   return {
     guid: bbChat.guid,
-    name: chatName(bbChat, contactIndex2),
+    name: chatName(bbChat, contactIndex),
     isGroup: (bbChat.participants?.length || 0) > 1,
     lastMessage: bbChat.lastMessage ? normalizeLastMessage(bbChat.lastMessage) : null,
     unread: 0
@@ -8663,115 +8822,22 @@ function messageText(bbMessage) {
   if (bbMessage.attachments?.length) return "[attachment]";
   return "";
 }
-function normalizeMessage(bbMessage, contactIndex2 = EMPTY_CONTACT_INDEX) {
+function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const rawSender = bbMessage.handle?.address || "";
   return {
     guid: bbMessage.guid,
     text: messageText(bbMessage),
     ts: bbMessage.dateCreated ?? bbMessage.dateDelivered ?? Date.now(),
     fromMe: !!bbMessage.isFromMe,
-    sender: bbMessage.isFromMe ? "" : contactIndex2.resolve(rawSender) || rawSender,
+    sender: bbMessage.isFromMe ? "" : contactIndex.resolve(rawSender) || rawSender,
     // Only the socket echo of a just-sent message carries tempGuid; a plain
     // REST fetch never does, so tempId is omitted rather than "".
     ...bbMessage.tempGuid ? { tempId: bbMessage.tempGuid } : {}
   };
 }
-function chatGuidOf(bbMessage) {
-  return bbMessage.chats?.[0]?.guid;
-}
 function embeddedChat(bbMessage) {
   return bbMessage.chats?.[0];
 }
-
-// daemon/lib/pins.js
-var import_node_fs3 = require("node:fs");
-var import_node_path2 = require("node:path");
-var PinStore = class {
-  constructor(path = pinsPath) {
-    this.path = path;
-    this.pinned = new Set(this._load());
-  }
-  _load() {
-    try {
-      const guids = JSON.parse((0, import_node_fs3.readFileSync)(this.path, "utf8"));
-      return Array.isArray(guids) ? guids : [];
-    } catch (err) {
-      if (err.code !== "ENOENT") logger.warn("pins: could not read pins.json", { err: err.message });
-      return [];
-    }
-  }
-  _save() {
-    try {
-      (0, import_node_fs3.mkdirSync)((0, import_node_path2.dirname)(this.path), { recursive: true });
-      (0, import_node_fs3.writeFileSync)(this.path, JSON.stringify([...this.pinned]));
-    } catch (err) {
-      logger.warn("pins: could not write pins.json", { err: err.message });
-    }
-  }
-  set(chatGuid, pinned) {
-    if (pinned) this.pinned.add(chatGuid);
-    else this.pinned.delete(chatGuid);
-    this._save();
-  }
-};
-
-// daemon/lib/store.js
-var Store = class {
-  constructor() {
-    this.chats = /* @__PURE__ */ new Map();
-    this.pins = new PinStore();
-  }
-  setPinned(chatGuid, pinned) {
-    this.pins.set(chatGuid, pinned);
-    const chat = this.chats.get(chatGuid);
-    if (chat) chat.pinned = pinned;
-  }
-  replaceChats(normalizedChats) {
-    for (const chat of normalizedChats) {
-      const existing = this.chats.get(chat.guid);
-      this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) });
-    }
-    return this.chatList();
-  }
-  // A Map's iteration order is insertion order and does NOT change when an
-  // existing key is re-set, so returning `this.chats.values()` directly
-  // would freeze the list in whatever order chats were first seen in,
-  // regardless of new messages arriving. Sort fresh every time instead of
-  // trusting the server's `sort` or the map's order.
-  chatList() {
-    return [...this.chats.values()].sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      const at = a.lastMessage?.ts;
-      const bt = b.lastMessage?.ts;
-      if (at == null && bt == null) return 0;
-      if (at == null) return 1;
-      if (bt == null) return -1;
-      return bt - at;
-    });
-  }
-  totalUnread() {
-    let total = 0;
-    for (const chat of this.chats.values()) total += chat.unread;
-    return total;
-  }
-  // Applies a BlueBubbles chat embedded on a message push (name/last message
-  // may be new to us if the chat was never fetched via `chats`).
-  upsertFromMessage(bbChat, message, contactIndex2 = EMPTY_CONTACT_INDEX) {
-    const existing = this.chats.get(bbChat.guid);
-    const chat = existing || { ...normalizeChat(bbChat, contactIndex2), pinned: this.pins.pinned.has(bbChat.guid) };
-    chat.name = bbChat.displayName || chat.name;
-    chat.isGroup = (bbChat.participants?.length || 0) > 1;
-    chat.lastMessage = { text: message.text, ts: message.ts, fromMe: message.fromMe };
-    if (!message.fromMe) chat.unread = (chat.unread || 0) + 1;
-    this.chats.set(bbChat.guid, chat);
-    return chat;
-  }
-  markRead(chatGuid) {
-    const chat = this.chats.get(chatGuid);
-    if (!chat) return;
-    chat.unread = 0;
-  }
-};
 
 // daemon/index.js
 var config = loadConfig();
@@ -8792,60 +8858,19 @@ function state() {
 function pushState() {
   bus.broadcast(state());
 }
-var bb = null;
-var socket = null;
-var contactIndex = EMPTY_CONTACT_INDEX;
-async function refreshContacts() {
-  try {
-    const contacts = await bb.getContacts();
-    contactIndex = ContactIndex.fromContacts(contacts);
-    logger.info("bluebubbles: contacts loaded", { contacts: contacts.length });
-  } catch (err) {
-    logger.warn("bluebubbles: contacts fetch failed", { err: err.message });
-  }
-}
+var session = null;
 if (config.ok) {
-  bb = new BlueBubblesClient(config);
-  socket = lookup(config.serverUrl, {
-    query: { password: config.password },
-    reconnectionDelay: 1e3,
-    reconnectionDelayMax: 15e3
-  });
-  socket.on("connect", () => {
-    connection = "connected";
-    lastError = "";
-    logger.info("bluebubbles: connected");
+  session = new BlueBubblesSession(config);
+  session.onConnection = (nextConnection, error) => {
+    connection = nextConnection;
+    lastError = error;
     pushState();
-    refreshContacts();
-  });
-  socket.on("disconnect", (reason) => {
-    logger.warn("bluebubbles: disconnected", { reason });
-    if (reason === "io server disconnect") {
-      connection = "error";
-      lastError = "BlueBubbles rejected the password";
-    } else {
-      connection = "connecting";
-      lastError = reason;
-    }
-    pushState();
-  });
-  socket.on("connect_error", (err) => {
-    logger.warn("bluebubbles: connect_error", { err: err.message });
-    connection = "connecting";
-    lastError = err.message;
-    pushState();
-  });
-  socket.on("new-message", (payload) => {
-    const chatGuid = chatGuidOf(payload);
-    const bbChat = embeddedChat(payload);
-    if (!chatGuid || !bbChat) {
-      logger.warn("bluebubbles: new-message with no embedded chat, dropping");
-      return;
-    }
-    const message = normalizeMessage(payload, contactIndex);
-    const chat = store.upsertFromMessage(bbChat, message, contactIndex);
-    bus.broadcast({ t: "message", chatGuid, message, chat, unread: store.totalUnread() });
-  });
+  };
+  session.onMessage = ({ chatGuid, chat, message }) => {
+    const cached = store.upsertFromMessage(chat, message);
+    bus.broadcast({ t: "message", chatGuid, message, chat: cached, unread: store.totalUnread() });
+  };
+  session.start();
 }
 async function handleCommand(payload, reply) {
   const { t } = payload;
@@ -8862,7 +8887,7 @@ async function handleCommand(payload, reply) {
         return;
       }
       try {
-        const chats = await bb.queryAllChats(contactIndex);
+        const chats = await session.chats();
         store.replaceChats(chats);
         reply({ t: "chats", chats: store.chatList().slice(0, payload.limit || 40), unread: store.totalUnread() });
       } catch (err) {
@@ -8879,7 +8904,7 @@ async function handleCommand(payload, reply) {
         return;
       }
       try {
-        const messages = await bb.getChatMessages(payload.chatGuid, payload.limit || 60, contactIndex);
+        const messages = await session.messages(payload.chatGuid, payload.limit || 60);
         reply({ t: "messages", chatGuid: payload.chatGuid, messages });
       } catch (err) {
         reply({ t: "error", for: "messages", message: err.message });
@@ -8891,7 +8916,7 @@ async function handleCommand(payload, reply) {
         return;
       }
       try {
-        const sent = await bb.sendText({ chatGuid: payload.chatGuid, text: payload.text, tempGuid: payload.tempId });
+        const sent = await session.sendText({ chatGuid: payload.chatGuid, text: payload.text, tempGuid: payload.tempId });
         reply({ t: "ack", for: "send", chatGuid: payload.chatGuid, tempId: payload.tempId, guid: sent.guid || "", ok: true });
       } catch (err) {
         reply({ t: "ack", for: "send", chatGuid: payload.chatGuid, tempId: payload.tempId, guid: "", ok: false, message: err.message });
@@ -8911,7 +8936,7 @@ async function handleCommand(payload, reply) {
 }
 function shutdown(signal) {
   logger.info("shutting down", { signal });
-  socket?.close();
+  session?.close();
   bus.close();
   process.exit(0);
 }

@@ -1,5 +1,6 @@
-// Thin REST client for the BlueBubbles server API, plus normalization from
-// its shapes into the daemon-protocol Chat/Message objects.
+// The daemon's whole BlueBubbles seam: the REST client, the Socket.IO
+// session, contact resolution, and normalization from BlueBubbles' shapes
+// into the daemon-protocol Chat/Message objects.
 //
 // Verified against the BlueBubbles Postman collection
 // (documenter.gw.postman.com/api/collections/765844/UV5RnfwM) and the
@@ -33,12 +34,101 @@
 // pagination and does its own ranking (Store.chatList) rather than trusting
 // any server-side top-N cut.
 
-import { EMPTY_CONTACT_INDEX } from './contacts.js'
+import { io } from 'socket.io-client'
+
+import { ContactIndex, EMPTY_CONTACT_INDEX } from './contacts.js'
+import { logger } from './logger.js'
 
 const CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200
 const CHAT_FETCH_CAP = 2000
 
-export class BlueBubblesClient {
+// Both transports plus the contact index behind one interface: callers get
+// protocol-shaped Chat/Message objects and a connection state, never a
+// BlueBubbles payload.
+export class BlueBubblesSession {
+  constructor(config) {
+    this.config = config
+    this.client = new BlueBubblesClient(config)
+    this.contacts = EMPTY_CONTACT_INDEX
+    this.socket = null
+    this.onConnection = () => {}
+    this.onMessage = () => {}
+  }
+
+  start() {
+    this.socket = io(this.config.serverUrl, {
+      query: { password: this.config.password },
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 15000
+    })
+
+    this.socket.on('connect', () => {
+      logger.info('bluebubbles: connected')
+      this.onConnection('connected', '')
+      this._refreshContacts()
+    })
+
+    this.socket.on('disconnect', (reason) => {
+      logger.warn('bluebubbles: disconnected', { reason })
+      if (reason === 'io server disconnect') {
+        // The server only disconnects a socket itself on auth failure
+        // (authMiddleware-equivalent check in httpService/index.ts); it will
+        // not retry on its own.
+        this.onConnection('error', 'BlueBubbles rejected the password')
+      } else {
+        this.onConnection('connecting', reason)
+      }
+    })
+
+    this.socket.on('connect_error', (err) => {
+      logger.warn('bluebubbles: connect_error', { err: err.message })
+      this.onConnection('connecting', err.message)
+    })
+
+    // BlueBubbles emits "new-message" for both inbound iMessages and the echo
+    // of a message this daemon just sent (chats embedded on the payload).
+    this.socket.on('new-message', (payload) => {
+      const bbChat = embeddedChat(payload)
+      if (!bbChat?.guid) {
+        logger.warn('bluebubbles: new-message with no embedded chat, dropping')
+        return
+      }
+      this.onMessage({
+        chatGuid: bbChat.guid,
+        chat: normalizeChat(bbChat, this.contacts),
+        message: normalizeMessage(payload, this.contacts)
+      })
+    })
+  }
+
+  close() {
+    this.socket?.close()
+  }
+
+  async chats() {
+    return this.client.queryAllChats(this.contacts)
+  }
+
+  async messages(chatGuid, limit) {
+    return this.client.getChatMessages(chatGuid, limit, this.contacts)
+  }
+
+  async sendText({ chatGuid, text, tempGuid }) {
+    return this.client.sendText({ chatGuid, text, tempGuid })
+  }
+
+  async _refreshContacts() {
+    try {
+      const contacts = await this.client.getContacts()
+      this.contacts = ContactIndex.fromContacts(contacts)
+      logger.info('bluebubbles: contacts loaded', { contacts: contacts.length })
+    } catch (err) {
+      logger.warn('bluebubbles: contacts fetch failed', { err: err.message })
+    }
+  }
+}
+
+class BlueBubblesClient {
   constructor({ serverUrl, password, method }) {
     this.serverUrl = serverUrl
     this.password = password
@@ -127,7 +217,7 @@ function chatName(bbChat, contactIndex) {
   return extra > 0 ? joined + ' +' + extra : joined
 }
 
-export function normalizeChat(bbChat, contactIndex = EMPTY_CONTACT_INDEX) {
+function normalizeChat(bbChat, contactIndex = EMPTY_CONTACT_INDEX) {
   return {
     guid: bbChat.guid,
     name: chatName(bbChat, contactIndex),
@@ -149,7 +239,7 @@ function messageText(bbMessage) {
   return ''
 }
 
-export function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
+function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const rawSender = bbMessage.handle?.address || ''
   return {
     guid: bbMessage.guid,
@@ -164,11 +254,7 @@ export function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) 
 }
 
 // The chat a `new-message` socket push belongs to is embedded on the message
-// itself (see NOTES in the report on includeChats/handleNewMessage).
-export function chatGuidOf(bbMessage) {
-  return bbMessage.chats?.[0]?.guid
-}
-
-export function embeddedChat(bbMessage) {
+// itself, because BlueBubbles serializes messages with includeChats on.
+function embeddedChat(bbMessage) {
   return bbMessage.chats?.[0]
 }

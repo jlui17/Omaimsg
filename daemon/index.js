@@ -1,12 +1,9 @@
-import { io } from 'socket.io-client'
-
 import { loadConfig, logConfigOutcome } from './lib/config.js'
 import { socketPath } from './lib/paths.js'
 import { logger } from './lib/logger.js'
 import { Bus } from './lib/bus.js'
 import { Store } from './lib/store.js'
-import { BlueBubblesClient, chatGuidOf, embeddedChat, normalizeMessage } from './lib/bluebubbles.js'
-import { ContactIndex, EMPTY_CONTACT_INDEX } from './lib/contacts.js'
+import { BlueBubblesSession } from './lib/bluebubbles.js'
 
 const config = loadConfig()
 logConfigOutcome(config)
@@ -31,72 +28,23 @@ function pushState() {
   bus.broadcast(state())
 }
 
-let bb = null
-let socket = null
-let contactIndex = EMPTY_CONTACT_INDEX
-
-async function refreshContacts() {
-  try {
-    const contacts = await bb.getContacts()
-    contactIndex = ContactIndex.fromContacts(contacts)
-    logger.info('bluebubbles: contacts loaded', { contacts: contacts.length })
-  } catch (err) {
-    logger.warn('bluebubbles: contacts fetch failed', { err: err.message })
-  }
-}
+let session = null
 
 if (config.ok) {
-  bb = new BlueBubblesClient(config)
+  session = new BlueBubblesSession(config)
 
-  socket = io(config.serverUrl, {
-    query: { password: config.password },
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 15000
-  })
-
-  socket.on('connect', () => {
-    connection = 'connected'
-    lastError = ''
-    logger.info('bluebubbles: connected')
+  session.onConnection = (nextConnection, error) => {
+    connection = nextConnection
+    lastError = error
     pushState()
-    refreshContacts()
-  })
+  }
 
-  socket.on('disconnect', (reason) => {
-    logger.warn('bluebubbles: disconnected', { reason })
-    if (reason === 'io server disconnect') {
-      // The server only disconnects a socket itself on auth failure
-      // (authMiddleware-equivalent check in httpService/index.ts); it will
-      // not retry on its own.
-      connection = 'error'
-      lastError = 'BlueBubbles rejected the password'
-    } else {
-      connection = 'connecting'
-      lastError = reason
-    }
-    pushState()
-  })
+  session.onMessage = ({ chatGuid, chat, message }) => {
+    const cached = store.upsertFromMessage(chat, message)
+    bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.totalUnread() })
+  }
 
-  socket.on('connect_error', (err) => {
-    logger.warn('bluebubbles: connect_error', { err: err.message })
-    connection = 'connecting'
-    lastError = err.message
-    pushState()
-  })
-
-  // BlueBubbles emits "new-message" for both inbound iMessages and the echo
-  // of a message this daemon just sent (chats embedded on the payload).
-  socket.on('new-message', (payload) => {
-    const chatGuid = chatGuidOf(payload)
-    const bbChat = embeddedChat(payload)
-    if (!chatGuid || !bbChat) {
-      logger.warn('bluebubbles: new-message with no embedded chat, dropping')
-      return
-    }
-    const message = normalizeMessage(payload, contactIndex)
-    const chat = store.upsertFromMessage(bbChat, message, contactIndex)
-    bus.broadcast({ t: 'message', chatGuid, message, chat, unread: store.totalUnread() })
-  })
+  session.start()
 }
 
 async function handleCommand(payload, reply) {
@@ -117,7 +65,7 @@ async function handleCommand(payload, reply) {
         return
       }
       try {
-        const chats = await bb.queryAllChats(contactIndex)
+        const chats = await session.chats()
         store.replaceChats(chats)
         // Slice AFTER Store's pinned-first/recency sort, never at the
         // BlueBubbles fetch: see bluebubbles.js's header note on why the
@@ -138,7 +86,7 @@ async function handleCommand(payload, reply) {
         return
       }
       try {
-        const messages = await bb.getChatMessages(payload.chatGuid, payload.limit || 60, contactIndex)
+        const messages = await session.messages(payload.chatGuid, payload.limit || 60)
         reply({ t: 'messages', chatGuid: payload.chatGuid, messages })
       } catch (err) {
         reply({ t: 'error', for: 'messages', message: err.message })
@@ -151,7 +99,7 @@ async function handleCommand(payload, reply) {
         return
       }
       try {
-        const sent = await bb.sendText({ chatGuid: payload.chatGuid, text: payload.text, tempGuid: payload.tempId })
+        const sent = await session.sendText({ chatGuid: payload.chatGuid, text: payload.text, tempGuid: payload.tempId })
         reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId: payload.tempId, guid: sent.guid || '', ok: true })
       } catch (err) {
         reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId: payload.tempId, guid: '', ok: false, message: err.message })
@@ -175,7 +123,7 @@ async function handleCommand(payload, reply) {
 
 function shutdown(signal) {
   logger.info('shutting down', { signal })
-  socket?.close()
+  session?.close()
   bus.close()
   process.exit(0)
 }
