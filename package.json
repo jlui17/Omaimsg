@@ -1,0 +1,9 @@
+{
+  "name": "omaimsg",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "daemon",
+    "mock"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "omaimsg-mock-bluebubbles",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fake BlueBubbles server for developing the omaimsg daemon against.",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.5"
+  }
+}

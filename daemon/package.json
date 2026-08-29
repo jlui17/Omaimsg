@@ -1,0 +1,17 @@
+{
+  "name": "omaimsg-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bridges a BlueBubbles server to the omaimsg Unix-socket NDJSON protocol.",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  }
+}

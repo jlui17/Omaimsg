@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "io.omaimsg",
+  "name": "Omaimsg",
+  "version": "0.1.0",
+  "author": "omaimsg",
+  "license": "MIT",
+  "description": "iMessage for the Omarchy bar: unread badge and a keyboard-driven chat list / thread popup backed by a BlueBubbles daemon.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Omaimsg",
+    "category": "Communication",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "socketPath": "",
+      "autostartDaemon": true,
+      "showUnreadCount": true,
+      "chatLimit": 40,
+      "messageLimit": 60
+    },
+    "schema": [
+      { "key": "socketPath", "type": "string", "label": "Daemon socket path (blank = default)" },
+      { "key": "autostartDaemon", "type": "bool", "label": "Start the daemon automatically" },
+      { "key": "showUnreadCount", "type": "bool", "label": "Show unread count next to the icon" },
+      { "key": "chatLimit", "type": "int", "label": "Chats listed in the panel" },
+      { "key": "messageLimit", "type": "int", "label": "Messages loaded per conversation" }
+    ]
+  }
+}
