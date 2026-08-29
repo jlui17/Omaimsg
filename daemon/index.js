@@ -74,6 +74,7 @@ if (config.ok) {
 
   session.onMessage = ({ chatGuid, chat, message }) => {
     const cached = store.upsertFromMessage(chat, message)
+    store.appendToThread(chatGuid, message)
     bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.totalUnread() })
   }
 
@@ -118,11 +119,21 @@ async function handleCommand(payload, reply) {
         reply({ t: 'error', for: 'messages', message: 'chatGuid required' })
         return
       }
+      // Cache-first, then revalidate: a warm thread renders before the
+      // BlueBubbles round-trip, and a second `messages` frame follows only
+      // when the server's page turns out to differ (docs/daemon-protocol.md).
+      const served = store.cachedThread(payload.chatGuid)
+      if (served) reply({ t: 'messages', chatGuid: payload.chatGuid, messages: served })
       try {
         const messages = await session.messages(payload.chatGuid, payload.limit || 60)
-        reply({ t: 'messages', chatGuid: payload.chatGuid, messages })
+        const changed = store.cacheThread(payload.chatGuid, messages)
+        if (!served || changed) reply({ t: 'messages', chatGuid: payload.chatGuid, messages })
       } catch (err) {
-        reply({ t: 'error', for: 'messages', message: err.message })
+        // A client already holding a cached page keeps it rather than being
+        // told the thread failed; the `state` frame is what surfaces a
+        // BlueBubbles outage.
+        if (served) logger.warn('messages: revalidation failed, cached page stands', { chatGuid: payload.chatGuid, err: err.message })
+        else reply({ t: 'error', for: 'messages', message: err.message })
       }
       return
 

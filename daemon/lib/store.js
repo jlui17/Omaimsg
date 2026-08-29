@@ -1,12 +1,56 @@
 import { PinStore } from './pins.js'
 
+// A cached page is exactly what the panel renders (its `messageLimit`, 60 by
+// default), so a shorter cap would make every thread open re-fetch to fill the
+// view. 30 chats is past what one sitting opens; raise it only if a session
+// routinely cycles through more than that, since every entry pins a full page
+// in memory for the daemon's lifetime.
+const MAX_CACHED_MESSAGES = 60
+const MAX_CACHED_THREADS = 30
+
 // Daemon-owned chat cache and unread counts. Unread is in-memory only, per
 // the protocol doc: +1 per inbound message to a chat not marked read since,
 // cleared by `read`. It resets on daemon restart; pins do not.
 export class Store {
   constructor() {
     this.chats = new Map()
+    this.threads = new Map()
     this.pins = new PinStore()
+  }
+
+  // Least-recently-read eviction: reading a thread moves it to the end of the
+  // Map, so the oldest key is always the coldest.
+  cachedThread(chatGuid) {
+    const thread = this.threads.get(chatGuid)
+    if (!thread) return null
+    this.threads.delete(chatGuid)
+    this.threads.set(chatGuid, thread)
+    return thread
+  }
+
+  // True when the page is new information, which is what tells the caller
+  // whether a client already served from cache still needs a fresh frame.
+  cacheThread(chatGuid, messages) {
+    const page = messages.slice(-MAX_CACHED_MESSAGES)
+    const previous = this.threads.get(chatGuid)
+    const changed = !previous || JSON.stringify(previous) !== JSON.stringify(page)
+    this.threads.delete(chatGuid)
+    this.threads.set(chatGuid, page)
+    for (const guid of this.threads.keys()) {
+      if (this.threads.size <= MAX_CACHED_THREADS) break
+      this.threads.delete(guid)
+    }
+    return changed
+  }
+
+  // Only threads already cached are kept warm. Caching a chat the panel has
+  // never opened would fill the LRU with pages nobody is going to read and
+  // evict the ones somebody is.
+  appendToThread(chatGuid, message) {
+    const thread = this.threads.get(chatGuid)
+    if (!thread) return
+    if (message.guid && thread.some((m) => m.guid === message.guid)) return
+    this.threads.set(chatGuid, [...thread, message].slice(-MAX_CACHED_MESSAGES))
   }
 
   setPinned(chatGuid, pinned) {

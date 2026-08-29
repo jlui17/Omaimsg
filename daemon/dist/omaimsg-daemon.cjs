@@ -4270,10 +4270,43 @@ class PinStore {
 }
 
 // daemon/lib/store.js
+var MAX_CACHED_MESSAGES = 60;
+var MAX_CACHED_THREADS = 30;
+
 class Store {
   constructor() {
     this.chats = new Map;
+    this.threads = new Map;
     this.pins = new PinStore;
+  }
+  cachedThread(chatGuid) {
+    const thread = this.threads.get(chatGuid);
+    if (!thread)
+      return null;
+    this.threads.delete(chatGuid);
+    this.threads.set(chatGuid, thread);
+    return thread;
+  }
+  cacheThread(chatGuid, messages) {
+    const page = messages.slice(-MAX_CACHED_MESSAGES);
+    const previous = this.threads.get(chatGuid);
+    const changed = !previous || JSON.stringify(previous) !== JSON.stringify(page);
+    this.threads.delete(chatGuid);
+    this.threads.set(chatGuid, page);
+    for (const guid of this.threads.keys()) {
+      if (this.threads.size <= MAX_CACHED_THREADS)
+        break;
+      this.threads.delete(guid);
+    }
+    return changed;
+  }
+  appendToThread(chatGuid, message) {
+    const thread = this.threads.get(chatGuid);
+    if (!thread)
+      return;
+    if (message.guid && thread.some((m) => m.guid === message.guid))
+      return;
+    this.threads.set(chatGuid, [...thread, message].slice(-MAX_CACHED_MESSAGES));
   }
   setPinned(chatGuid, pinned) {
     this.pins.set(chatGuid, pinned);
@@ -7388,6 +7421,7 @@ if (config.ok) {
   };
   session.onMessage = ({ chatGuid, chat, message }) => {
     const cached = store.upsertFromMessage(chat, message);
+    store.appendToThread(chatGuid, message);
     bus.broadcast({ t: "message", chatGuid, message, chat: cached, unread: store.totalUnread() });
   };
   session.start();
@@ -7423,11 +7457,19 @@ async function handleCommand(payload, reply) {
         reply({ t: "error", for: "messages", message: "chatGuid required" });
         return;
       }
+      const served = store.cachedThread(payload.chatGuid);
+      if (served)
+        reply({ t: "messages", chatGuid: payload.chatGuid, messages: served });
       try {
         const messages = await session.messages(payload.chatGuid, payload.limit || 60);
-        reply({ t: "messages", chatGuid: payload.chatGuid, messages });
+        const changed = store.cacheThread(payload.chatGuid, messages);
+        if (!served || changed)
+          reply({ t: "messages", chatGuid: payload.chatGuid, messages });
       } catch (err) {
-        reply({ t: "error", for: "messages", message: err.message });
+        if (served)
+          logger.warn("messages: revalidation failed, cached page stands", { chatGuid: payload.chatGuid, err: err.message });
+        else
+          reply({ t: "error", for: "messages", message: err.message });
       }
       return;
     case "send":
