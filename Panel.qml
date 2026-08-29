@@ -19,6 +19,8 @@ Panel {
   property string view: "chats"
   property var activeChat: null
   property int cursorIndex: 0
+  // -1 when the thread body has no message selected
+  property int messageIndex: -1
   property string cursorFollowGuid: ""
   property string statusLine: ""
   property bool searching: false
@@ -125,6 +127,12 @@ Panel {
     }
   }
 
+  function imageAttachmentsOf(message) {
+    return ((message && message.attachments) || []).filter(function (a) {
+      return a && a.mime && a.mime.indexOf("image/") === 0
+    })
+  }
+
   function chatAt(index) {
     var list = root.visibleChats
     if (index < 0 || index >= list.length) return null
@@ -139,9 +147,37 @@ Panel {
     chatList.positionViewAtIndex(next, ListView.Contain)
   }
 
+  // `k` from no selection starts at the latest message; `j` past the latest
+  // drops back to no selection, so the newest end is where the cursor enters
+  // and leaves.
+  function moveMessageCursor(delta) {
+    var count = root.messages.length
+    if (count === 0) return
+    if (root.messageIndex < 0) {
+      if (delta > 0) return
+      root.messageIndex = count - 1
+    } else {
+      var next = root.messageIndex + delta
+      if (next >= count) {
+        root.messageIndex = -1
+        return
+      }
+      root.messageIndex = Math.max(0, next)
+    }
+    messageList.positionViewAtIndex(root.messageIndex, ListView.Contain)
+  }
+
+  function previewSelectedMessage() {
+    if (root.messageIndex < 0 || !root.client) return
+    var images = root.imageAttachmentsOf(root.messages[root.messageIndex])
+    if (!images.length) return
+    root.client.requestPreview(images[0].guid)
+  }
+
   function openThread(chat) {
     if (!chat || !chat.guid) return
     root.activeChat = chat
+    root.messageIndex = -1
     root.statusLine = ""
     root.view = "thread"
     root.focusSection = "messages"
@@ -246,6 +282,7 @@ Panel {
     if (root.view !== "thread" || !root.activeGuid) return
     root.client.reloadActiveMessages(root.messageLimit)
     root.client.markRead(root.activeGuid)
+    root.messageIndex = -1
     root.focusSection = "messages"
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
@@ -255,6 +292,7 @@ Panel {
     enabled: root.client !== null
 
     function onActiveMessagesAppended() {
+      if (root.messageIndex >= 0) return
       Qt.callLater(function () { messageList.positionViewAtEnd() })
     }
 
@@ -303,6 +341,8 @@ Panel {
       onMoveRequested: function (dx, dy) {
         if (root.view === "thread") {
           if (dx < 0) root.backToChats()
+          else if (dx > 0) root.previewSelectedMessage()
+          else root.moveMessageCursor(dy)
           return
         }
         if (dx > 0) {
@@ -317,6 +357,7 @@ Panel {
       }
       onActivateRequested: {
         if (root.view === "chats") root.activateCursor()
+        else root.previewSelectedMessage()
       }
       onTabRequested: function (direction) { root.switchPanel(direction) }
       onTextKey: function (text) {
@@ -612,8 +653,8 @@ Panel {
               readonly property bool showSender: !bubbleRow.modelData.fromMe
                 && root.threadIsGroup
                 && !!bubbleRow.modelData.sender
-              readonly property var imageAttachments: (bubbleRow.modelData.attachments || [])
-                .filter(function (a) { return a && a.mime && a.mime.indexOf("image/") === 0 })
+              readonly property var imageAttachments: root.imageAttachmentsOf(bubbleRow.modelData)
+              readonly property bool selected: root.messageIndex === bubbleRow.index
               readonly property real imageWidth: bubbleRow.imageAttachments.length > 0
                 ? Math.min(bubbleRow.maxInner, Style.space(180))
                 : 0
@@ -632,6 +673,8 @@ Panel {
                 anchors.right: bubbleRow.modelData.fromMe ? parent.right : undefined
                 anchors.left: bubbleRow.modelData.fromMe ? undefined : parent.left
                 radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
+                border.width: bubbleRow.selected ? 1 : 0
+                border.color: root.accent
                 opacity: bubbleRow.modelData.pending ? 0.6 : 1.0
                 color: bubbleRow.modelData.fromMe
                   ? Style.selectedFillFor(root.foreground, root.accent)
