@@ -378,6 +378,10 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
+    Behavior on contentHeight {
+      NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+    }
+
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
@@ -542,6 +546,11 @@ Panel {
           width: parent.width
           spacing: Style.space(4)
           visible: root.view === "chats"
+          opacity: visible ? 1 : 0
+
+          Behavior on opacity {
+            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+          }
 
           Text {
             width: parent.width
@@ -564,6 +573,16 @@ Panel {
             currentIndex: root.cursorIndex
             spacing: Style.space(1)
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            add: Transition {
+              NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 140; easing.type: Easing.OutCubic }
+            }
+            move: Transition {
+              NumberAnimation { properties: "y"; duration: 140; easing.type: Easing.OutCubic }
+            }
+            displaced: Transition {
+              NumberAnimation { properties: "y"; duration: 140; easing.type: Easing.OutCubic }
+            }
 
             ListModel {
               id: chatModel
@@ -685,6 +704,11 @@ Panel {
           width: parent.width
           spacing: Style.space(6)
           visible: root.view === "thread"
+          opacity: visible ? 1 : 0
+
+          Behavior on opacity {
+            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+          }
 
           ListView {
             id: messageList
@@ -791,12 +815,20 @@ Panel {
                         source: imageFrame.localPath
                         asynchronous: true
                         fillMode: Image.PreserveAspectFit
-                        visible: status === Image.Ready
+                        opacity: status === Image.Ready ? 1 : 0
+
+                        Behavior on opacity {
+                          NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                        }
                       }
 
                       Text {
                         anchors.centerIn: parent
-                        visible: picture.status !== Image.Ready
+                        opacity: picture.status === Image.Ready ? 0 : 1
+
+                        Behavior on opacity {
+                          NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                        }
                         // nf-md-image, or nf-md-image_off once loading failed
                         text: picture.status === Image.Error ? "󰋫" : "󰋩"
                         color: root.secondaryForeground
