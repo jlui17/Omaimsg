@@ -26,6 +26,8 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 
 Issues live as GitHub issues on `jlui17/Omaimsg`, driven with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+A ticket lands as one commit closing it (`Closes #N`): adjustments asked for mid-round get squashed into that commit, not stacked after it. Review feedback on an open PR is the other case and keeps its commit per item.
+
 ### Triage labels
 
 The five canonical roles, each label string equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
