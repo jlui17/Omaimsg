@@ -22,6 +22,8 @@ Panel {
   property string cursorFollowGuid: ""
   property string statusLine: ""
   property bool searching: false
+  // "search" | "chats"
+  property string focusSection: "chats"
   property string filterText: ""
 
   readonly property var chats: client ? client.chats : []
@@ -145,13 +147,14 @@ Panel {
   }
 
   function beginSearch() {
+    root.focusSection = "search"
+    Qt.callLater(function () { searchField.forceActiveFocus() })
     if (root.searching) return
     root.searching = true
     root.cursorIndex = 0
     // The filter should see more conversations than the list renders, so pull a
     // deeper page for as long as search is up.
     if (root.client) root.client.requestChats(200)
-    Qt.callLater(function () { searchField.forceActiveFocus() })
   }
 
   // Drops the filter and the deep page without touching focus: callers decide
@@ -166,16 +169,18 @@ Panel {
 
   function exitSearch() {
     root.clearSearch()
+    root.focusSection = "chats"
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
-  // With no match there is nothing to open and nowhere to send focus, so an
-  // empty result set keeps the user in the field.
-  function activateSearchResult() {
-    var chat = root.chatAt(root.cursorIndex)
-    if (!chat) return
-    root.clearSearch()
-    root.openThread(chat)
+  // With no match there is nowhere to send the cursor, so an empty result set
+  // keeps the user in the field.
+  function commitSearch() {
+    if (!root.chatAt(0)) return
+    root.focusSection = "chats"
+    root.cursorIndex = 0
+    chatList.positionViewAtIndex(0, ListView.Contain)
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   // A pin reorders the list under the cursor, so follow the chat rather than
@@ -271,11 +276,21 @@ Panel {
       // driving the chat cursor.
       blocked: composer.activeFocus || searchField.activeFocus
 
+      // Escape and `h` walk back out one layer at a time: the thread, then the
+      // search, then the panel itself.
       onCloseRequested: {
         if (root.view === "thread") root.backToChats()
+        else if (root.searching) root.exitSearch()
         else root.close()
       }
-      onMoveRequested: function (dx, dy) { if (root.view === "chats") root.moveCursor(dy) }
+      onMoveRequested: function (dx, dy) {
+        if (root.view !== "chats") return
+        if (dx < 0) {
+          if (root.searching) root.exitSearch()
+          return
+        }
+        root.moveCursor(dy)
+      }
       onActivateRequested: {
         if (root.view === "chats") root.activateCursor()
         else composer.forceActiveFocus()
@@ -332,9 +347,6 @@ Panel {
         }
 
         // ── Search ───────────────────────────────────────────────────────
-        //
-        // The key catcher is blocked while this field has focus, so the list
-        // keys it would otherwise own are re-bound here.
         TextField {
           id: searchField
           width: parent.width
@@ -346,13 +358,9 @@ Panel {
             root.filterText = text
             root.cursorIndex = 0
           }
-          onAccepted: root.activateSearchResult()
+          onAccepted: root.commitSearch()
           Keys.onDownPressed: function (event) {
-            root.moveCursor(1)
-            event.accepted = true
-          }
-          Keys.onUpPressed: function (event) {
-            root.moveCursor(-1)
+            root.commitSearch()
             event.accepted = true
           }
           Keys.onEscapePressed: function (event) {
@@ -425,7 +433,7 @@ Panel {
               height: implicitHeight
               foreground: root.foreground
               accent: root.accent
-              hasCursor: root.cursorIndex === chatRow.index
+              hasCursor: root.focusSection === "chats" && root.cursorIndex === chatRow.index
 
               Column {
                 id: rowText
