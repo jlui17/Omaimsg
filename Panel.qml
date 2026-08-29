@@ -17,9 +17,7 @@ Panel {
 
   // "chats" | "thread"
   property string view: "chats"
-  property string activeGuid: ""
   property var activeChat: null
-  property var messages: []
   property int cursorIndex: 0
   property string cursorFollowGuid: ""
   property string statusLine: ""
@@ -27,6 +25,8 @@ Panel {
   property string filterText: ""
 
   readonly property var chats: client ? client.chats : []
+  readonly property string activeGuid: client ? client.activeChatGuid : ""
+  readonly property var messages: client ? client.activeMessages : []
   readonly property int chatLimit: root.setting("chatLimit", 40)
   readonly property int messageLimit: root.setting("messageLimit", 60)
 
@@ -130,13 +130,11 @@ Panel {
 
   function openThread(chat) {
     if (!chat || !chat.guid) return
-    root.activeGuid = chat.guid
     root.activeChat = chat
-    root.messages = []
     root.statusLine = ""
     root.view = "thread"
     if (root.client) {
-      root.client.loadMessages(chat.guid, root.messageLimit)
+      root.client.openChat(chat.guid, root.messageLimit)
       root.client.markRead(chat.guid)
     }
     Qt.callLater(function () { composer.forceActiveFocus() })
@@ -202,75 +200,22 @@ Panel {
 
   function backToChats() {
     root.view = "chats"
-    root.activeGuid = ""
     root.activeChat = null
-    root.messages = []
     root.statusLine = ""
     composer.text = ""
+    if (root.client) root.client.closeChat()
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
-  }
-
-  function appendMessage(message) {
-    if (!message) return
-    var list = root.messages.slice()
-    list.push(message)
-    root.messages = list
-    Qt.callLater(function () { messageList.positionViewAtEnd() })
-  }
-
-  function patchMessage(guid, fields) {
-    var list = root.messages.slice()
-    for (var i = list.length - 1; i >= 0; i--) {
-      if (list[i].guid !== guid) continue
-      list[i] = Object.assign({}, list[i], fields)
-      root.messages = list
-      return true
-    }
-    return false
-  }
-
-  // The daemon always echoes our own sends back; promote the optimistic row to
-  // the real message instead of showing the text twice. `tempId` is exact and
-  // present whenever the daemon knows it; the guid the `ack` stamped on the row
-  // and finally the text cover an echo that arrives without one.
-  function absorbEcho(message) {
-    if (!message || !message.fromMe) return false
-    var list = root.messages.slice()
-    for (var i = list.length - 1; i >= 0; i--) {
-      var row = list[i]
-      if (!row.optimistic) continue
-      var matches = message.tempId
-        ? row.tempId === message.tempId
-        : ((message.guid && row.guid === message.guid) || row.text === message.text)
-      if (!matches) continue
-      list[i] = message
-      root.messages = list
-      return true
-    }
-    return false
   }
 
   function send() {
     var text = composer.text
     if (!text || !text.trim().length || !root.client) return
-    var tempId = root.client.sendMessage(root.activeGuid, text)
-    if (!tempId.length) {
+    if (!root.client.sendMessage(text)) {
       root.statusLine = "Not connected"
       return
     }
     composer.text = ""
     root.statusLine = ""
-    root.appendMessage({
-      guid: tempId,
-      tempId: tempId,
-      optimistic: true,
-      text: text,
-      ts: Date.now(),
-      fromMe: true,
-      sender: "",
-      pending: true,
-      failed: false
-    })
   }
 
   onOpenedChanged: {
@@ -279,7 +224,7 @@ Panel {
     root.client.refresh()
     root.client.requestChats(root.chatLimit)
     if (root.view !== "thread" || !root.activeGuid) return
-    root.client.loadMessages(root.activeGuid, root.messageLimit)
+    root.client.reloadActiveMessages(root.messageLimit)
     root.client.markRead(root.activeGuid)
     Qt.callLater(function () { composer.forceActiveFocus() })
   }
@@ -288,28 +233,20 @@ Panel {
     target: root.client
     enabled: root.client !== null
 
-    function onMessagesLoaded(chatGuid, messages) {
-      if (chatGuid !== root.activeGuid) return
-      root.messages = messages || []
+    function onActiveMessagesAppended() {
       Qt.callLater(function () { messageList.positionViewAtEnd() })
     }
 
     function onMessageArrived(chatGuid, message, chat) {
       if (chatGuid !== root.activeGuid || !message) return
       if (chat) root.activeChat = chat
-      if (!root.absorbEcho(message)) root.appendMessage(message)
       // The thread is on screen, so an inbound message is read the moment it
       // lands rather than sitting as an unread the user has already seen.
       if (root.opened && root.client) root.client.markRead(chatGuid)
     }
 
-    function onSendAcknowledged(chatGuid, tempId, guid, ok, message) {
-      var fields = { pending: false, failed: !ok }
-      // Re-key the row to the real message so a later echo that carries no
-      // tempId still matches on guid rather than falling through to text.
-      if (ok && guid.length > 0) fields.guid = guid
-      root.patchMessage(tempId, fields)
-      if (!ok) root.statusLine = message || "Send failed"
+    function onSendFailed(message) {
+      root.statusLine = message || "Send failed"
     }
 
     function onCommandFailed(command, message) {

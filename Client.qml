@@ -31,6 +31,9 @@ Item {
   property int chatsEpoch: 0
   property string lastSocketError: ""
 
+  property string activeChatGuid: ""
+  property var activeMessages: []
+
   // Whether the daemon is actually reachable.
   //
   // `Socket.connected` cannot answer this: it reads back `true` while a connect
@@ -43,9 +46,11 @@ Item {
 
   readonly property bool ready: linkUp && connection === "connected"
 
-  signal messagesLoaded(string chatGuid, var messages)
+  // Emitted whenever rows land at the end of activeMessages: a freshly loaded
+  // page, an inbound message, an optimistic send.
+  signal activeMessagesAppended()
   signal messageArrived(string chatGuid, var message, var chat)
-  signal sendAcknowledged(string chatGuid, string tempId, string guid, bool ok, string message)
+  signal sendFailed(string message)
   signal commandFailed(string command, string message)
 
   function request(payload) {
@@ -82,13 +87,83 @@ Item {
     return request({ t: "pin", chatGuid: chatGuid, pinned: pinned === true })
   }
 
-  // Returns the tempId the daemon echoes back in its `ack`, or "" when the
-  // frame could not be written. The caller keys its optimistic row on it.
-  function sendMessage(chatGuid, text) {
-    if (!chatGuid || !text || !text.length) return ""
+  function openChat(chatGuid, limit) {
+    if (!chatGuid || !chatGuid.length) return false
+    root.activeChatGuid = chatGuid
+    root.activeMessages = []
+    return root.loadMessages(chatGuid, limit)
+  }
+
+  function closeChat() {
+    root.activeChatGuid = ""
+    root.activeMessages = []
+  }
+
+  // Re-requests the open thread without emptying it, so a reopened panel keeps
+  // showing the thread it had until the fresh page lands.
+  function reloadActiveMessages(limit) {
+    if (!root.activeChatGuid.length) return false
+    return root.loadMessages(root.activeChatGuid, limit)
+  }
+
+  // False when the frame could not be written; the optimistic row is appended
+  // only once the send is on the wire.
+  function sendMessage(text) {
+    if (!root.activeChatGuid.length || !text || !text.length) return false
     var tempId = "omaimsg-" + Date.now() + "-" + Math.floor(Math.random() * 1000000)
-    if (!request({ t: "send", chatGuid: chatGuid, text: text, tempId: tempId })) return ""
-    return tempId
+    if (!request({ t: "send", chatGuid: root.activeChatGuid, text: text, tempId: tempId }))
+      return false
+    root.appendActiveMessage({
+      guid: tempId,
+      tempId: tempId,
+      optimistic: true,
+      text: text,
+      ts: Date.now(),
+      fromMe: true,
+      sender: "",
+      pending: true,
+      failed: false
+    })
+    return true
+  }
+
+  function appendActiveMessage(message) {
+    if (!message) return
+    var list = root.activeMessages.slice()
+    list.push(message)
+    root.activeMessages = list
+    root.activeMessagesAppended()
+  }
+
+  function patchActiveMessage(guid, fields) {
+    var list = root.activeMessages.slice()
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].guid !== guid) continue
+      list[i] = Object.assign({}, list[i], fields)
+      root.activeMessages = list
+      return
+    }
+  }
+
+  // The daemon always echoes our own sends back; promote the optimistic row to
+  // the real message instead of showing the text twice. `tempId` is exact and
+  // present whenever the daemon knows it; the guid the `ack` stamped on the row
+  // and finally the text cover an echo that arrives without one.
+  function absorbEcho(message) {
+    if (!message || !message.fromMe) return false
+    var list = root.activeMessages.slice()
+    for (var i = list.length - 1; i >= 0; i--) {
+      var row = list[i]
+      if (!row.optimistic) continue
+      var matches = message.tempId
+        ? row.tempId === message.tempId
+        : ((message.guid && row.guid === message.guid) || row.text === message.text)
+      if (!matches) continue
+      list[i] = message
+      root.activeMessages = list
+      return true
+    }
+    return false
   }
 
   function setChats(list) {
@@ -194,19 +269,30 @@ Item {
         break
 
       case "messages":
-        root.messagesLoaded(frame.chatGuid || "", frame.messages || [])
+        if ((frame.chatGuid || "") === root.activeChatGuid) {
+          root.activeMessages = frame.messages || []
+          root.activeMessagesAppended()
+        }
         break
 
       case "message":
         if (frame.unread !== undefined) root.unread = frame.unread || 0
         if (frame.chat) root.upsertChatPreview(frame.chat)
+        if (frame.message && (frame.chatGuid || "") === root.activeChatGuid
+            && !root.absorbEcho(frame.message))
+          root.appendActiveMessage(frame.message)
         root.messageArrived(frame.chatGuid || "", frame.message || null, frame.chat || null)
         break
 
       case "ack":
-        if (frame.for === "send")
-          root.sendAcknowledged(frame.chatGuid || "", frame.tempId || "", frame.guid || "",
-                                frame.ok === true, frame.message || "")
+        if (frame.for === "send") {
+          var fields = { pending: false, failed: frame.ok !== true }
+          // Re-key the row to the real message so a later echo that carries no
+          // tempId still matches on guid rather than falling through to text.
+          if (frame.ok === true && frame.guid) fields.guid = frame.guid
+          root.patchActiveMessage(frame.tempId || "", fields)
+          if (frame.ok !== true) root.sendFailed(frame.message || "")
+        }
         break
 
       case "error":
