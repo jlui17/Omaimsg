@@ -30,6 +30,10 @@ Item {
   property var chats: []
   property int chatsEpoch: 0
   property double lastChatsMs: 0
+  // A request already on the wire counts as fresh for gating purposes: the link
+  // coming up asks for the list, and a panel opened before that reply lands
+  // would otherwise ask again for the same window.
+  property bool chatsPending: false
   property string lastSocketError: ""
 
   property string activeChatGuid: ""
@@ -75,7 +79,20 @@ Item {
   }
 
   function refresh() { return request({ t: "hello" }) }
-  function requestChats(limit) { return request({ t: "chats", limit: limit || 40 }) }
+
+  // Fetch the chat list on connect rather than waiting for the panel to open:
+  // the daemon pages the whole account to answer, and paying for it up front is
+  // what makes the first open of a freshly started shell render populated.
+  function onLinkEstablished() {
+    if (!root.linkUp) return
+    root.refresh()
+    root.requestChats()
+  }
+  function requestChats(limit) {
+    if (!request({ t: "chats", limit: limit || 40 })) return false
+    root.chatsPending = true
+    return true
+  }
   function loadMessages(chatGuid, limit) { return request({ t: "messages", chatGuid: chatGuid, limit: limit || 60 }) }
 
   // The daemon owns unread counts but sends no frame in reply to `read`, so the
@@ -296,7 +313,13 @@ Item {
       // down were never seen, so it cannot be trusted as fresh.
       root.attachmentPending = {}
       root.lastChatsMs = 0
-      root.refresh()
+      root.chatsPending = false
+      // Deferred by one turn: this runs from the socket's own signal, and the
+      // Loader has not published `item` yet at that point, so anything written
+      // here goes nowhere. The state frame still arrives because the daemon
+      // volunteers one on connect, which is what kept the dropped `hello`
+      // invisible.
+      Qt.callLater(root.onLinkEstablished)
     } else {
       root.linkUp = false
       // A brief socket blip is not a dead daemon. Retry quietly.
@@ -331,6 +354,7 @@ Item {
         break
 
       case "chats":
+        root.chatsPending = false
         root.lastChatsMs = Date.now()
         root.setChats(frame.chats || [])
         if (frame.unread !== undefined) root.unread = frame.unread || 0
@@ -374,6 +398,9 @@ Item {
         // A failed download must clear its pending flag, or the image can
         // never be re-requested for the rest of the session.
         if (frame.for === "attachment") root.settleAttachment(frame.guid || "", "")
+        // Same for the chat list: a failure that left this set would make every
+        // later open think a fetch was still coming.
+        if (frame.for === "chats") root.chatsPending = false
         root.commandFailed(frame.for || "", frame.message || "Unknown daemon error")
         break
     }

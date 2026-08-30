@@ -407,8 +407,10 @@ Panel {
     root.client.refresh()
     // A re-request costs the daemon a paginated sweep of the whole account, and
     // it already pushes a fresh `chats` frame on every inbound message, so the
-    // open pays for one only once the pushed list has gone quiet.
-    if (root.client.chatsAgeMs() > root.chatsMaxAgeMs) root.client.requestChats(root.chatLimit)
+    // open pays for one only once the pushed list has gone quiet -- and never
+    // while the link-up fetch is still in flight.
+    if (!root.client.chatsPending && root.client.chatsAgeMs() > root.chatsMaxAgeMs)
+      root.client.requestChats(root.chatLimit)
     if (root.view !== "thread" || !root.activeGuid) return
     root.client.reloadActiveMessages(root.messageLimit)
     root.client.markRead(root.activeGuid)
