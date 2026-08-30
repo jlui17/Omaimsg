@@ -146,6 +146,28 @@ async function waitForConnected(client, timeoutMs = 8000) {
   throw new Error('daemon never reached connection:"connected"')
 }
 
+// Cache-first means one `chats` request can be answered twice: the cached list,
+// then the revalidated one if it differs (docs/daemon-protocol.md). A client
+// applies both and the last one wins, so an assertion about the account's real
+// state has to do the same rather than reading whichever frame arrived first.
+async function settledChats(client, payload = {}) {
+  while (true) {
+    try {
+      await client.waitFor((f) => f.t === 'chats', 1)
+    } catch {
+      break
+    }
+  }
+  client.send({ t: 'chats', ...payload })
+  let frame = await client.waitFor((f) => f.t === 'chats')
+  try {
+    frame = await client.waitFor((f) => f.t === 'chats', 1500)
+  } catch {
+    // One frame was the whole answer: the cache was already right.
+  }
+  return frame
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -242,8 +264,7 @@ async function main() {
   const stateFrame = await waitForConnected(client)
   report('hello -> state connected', stateFrame.connection === 'connected', JSON.stringify(stateFrame))
 
-  client.send({ t: 'chats', limit: 40 })
-  const chatsFrame = await client.waitFor((f) => f.t === 'chats')
+  const chatsFrame = await settledChats(client, { limit: 40 })
   report('chats -> 7 chats', chatsFrame.chats?.length === 7, `got ${chatsFrame.chats?.length}`)
 
   const oneToOneChat = chatsFrame.chats.find((c) => c.isGroup === false)
@@ -281,8 +302,7 @@ async function main() {
   await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === orderTempId)
   await client.waitFor((f) => f.t === 'message' && f.chatGuid === orderTarget && f.message.fromMe === true)
 
-  client.send({ t: 'chats' })
-  const reorderedFrame = await client.waitFor((f) => f.t === 'chats')
+  const reorderedFrame = await settledChats(client)
   report(
     'chats -> messaging the last chat moves it to the front',
     reorderedFrame.chats[0]?.guid === orderTarget,
@@ -337,6 +357,39 @@ async function main() {
   )
   report('revalidation follows up with a second messages frame carrying the change', true)
   await mockControl('message-delay', { ms: 0 })
+
+  // Cache-first for `chats`, the same contract the thread pages keep. The
+  // store is warm from the requests above, so a re-request must answer well
+  // inside the sweep the daemon is simultaneously making. Delay applies per
+  // page, and the 7 canned chats page 3 at a time, so the sweep is slower than
+  // one delay.
+  await mockControl('chat-delay', { ms: 700 })
+  const warmChatsStart = Date.now()
+  client.send({ t: 'chats', limit: 40 })
+  await client.waitFor((f) => f.t === 'chats')
+  const warmChatsMs = Date.now() - warmChatsStart
+  report(
+    'chats -> cached list replies ahead of the account sweep',
+    warmChatsMs < 300,
+    `${warmChatsMs}ms against a 700ms per-page server delay`
+  )
+
+  // Revalidation: a change the daemon never saw over the socket still reaches
+  // the client, as a second frame after the cached one.
+  const staleChatMarker = `omaimsg-smoke-chats-revalidate-${process.pid}`
+  await mockControl('silent-message', { chatGuid, text: staleChatMarker })
+  client.send({ t: 'chats', limit: 40 })
+  const staleChatsFrame = await client.waitFor((f) => f.t === 'chats')
+  report(
+    'chats -> cached list is served before the server change is known',
+    !staleChatsFrame.chats.some((c) => c.lastMessage?.text === staleChatMarker)
+  )
+  await client.waitFor(
+    (f) => f.t === 'chats' && f.chats.some((c) => c.lastMessage?.text === staleChatMarker),
+    5000
+  )
+  report('chats -> revalidation follows up with a second frame carrying the change', true)
+  await mockControl('chat-delay', { ms: 0 })
 
   // Attachments: chat 0 seeds one image-only message (test/data.js).
   client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT, limit: 60 })
@@ -444,8 +497,7 @@ async function main() {
     JSON.stringify(previewError)
   )
 
-  client.send({ t: 'chats' })
-  const unreadBaseline = (await client.waitFor((f) => f.t === 'chats')).unread
+  const unreadBaseline = (await settledChats(client)).unread
 
   const tempId = 'smoke-1'
   const text = 'smoke test message'
@@ -480,8 +532,7 @@ async function main() {
   const stateAfterRead = await client.waitFor((f) => f.t === 'state', 3000)
   report('read -> total unread clears', stateAfterRead.unread === 0, `unread=${stateAfterRead.unread}`)
 
-  client.send({ t: 'chats' })
-  const chatsAfterRead = await client.waitFor((f) => f.t === 'chats')
+  const chatsAfterRead = await settledChats(client)
   const readChat = chatsAfterRead.chats.find((c) => c.guid === chatGuid)
   report('read -> chat.unread clears', readChat?.unread === 0, `unread=${readChat?.unread}`)
 
@@ -561,16 +612,14 @@ async function main() {
   await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === pageTempId)
   await client.waitFor((f) => f.t === 'message' && f.chatGuid === pageTarget && f.message.fromMe === true)
 
-  client.send({ t: 'chats', limit: 3 })
-  const pagedFrame = await client.waitFor((f) => f.t === 'chats')
+  const pagedFrame = await settledChats(client, { limit: 3 })
   report(
     'pagination: newest chat surfaces first despite sitting outside page one',
     pagedFrame.chats[0]?.guid === pageTarget,
     `got ${pagedFrame.chats[0]?.guid}`
   )
 
-  client.send({ t: 'chats', limit: 40 })
-  const allChatsFrame = await client.waitFor((f) => f.t === 'chats')
+  const allChatsFrame = await settledChats(client, { limit: 40 })
   report(
     'pagination: no chats dropped across pages',
     allChatsFrame.chats.length === 7,

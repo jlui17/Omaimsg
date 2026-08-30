@@ -93,22 +93,35 @@ async function handleCommand(payload, reply) {
       reply({ t: 'pong' })
       return
 
-    case 'chats':
+    case 'chats': {
       if (!config.ok) {
         reply({ t: 'error', for: 'chats', message: lastError })
         return
       }
+      // Slice AFTER Store's pinned-first/recency sort, never at the
+      // BlueBubbles fetch: see bluebubbles.js's header note on why the
+      // server's own top-N cut can't be trusted.
+      const limit = payload.limit || 40
+      // Cache-first, then revalidate, as the `messages` case does. This is the
+      // costlier of the two to answer cold: the fetch behind it pages the
+      // entire account, so a client holding a list should never wait on it.
+      // Every inbound message keeps the store current, so the cached answer is
+      // usually already the right one.
+      const servedChats = store.hasChats() ? store.chatList().slice(0, limit) : null
+      if (servedChats) reply({ t: 'chats', chats: servedChats, unread: store.totalUnread() })
       try {
-        const chats = await session.chats()
-        store.replaceChats(chats)
-        // Slice AFTER Store's pinned-first/recency sort, never at the
-        // BlueBubbles fetch: see bluebubbles.js's header note on why the
-        // server's own top-N cut can't be trusted.
-        reply({ t: 'chats', chats: store.chatList().slice(0, payload.limit || 40), unread: store.totalUnread() })
+        store.replaceChats(await session.chats())
+        const fresh = store.chatList().slice(0, limit)
+        if (!servedChats || JSON.stringify(servedChats) !== JSON.stringify(fresh))
+          reply({ t: 'chats', chats: fresh, unread: store.totalUnread() })
       } catch (err) {
-        reply({ t: 'error', for: 'chats', message: err.message })
+        // A client already holding a list keeps it rather than being told the
+        // fetch failed; the `state` frame is what surfaces a BlueBubbles outage.
+        if (servedChats) logger.warn('chats: revalidation failed, cached list stands', { err: err.message })
+        else reply({ t: 'error', for: 'chats', message: err.message })
       }
       return
+    }
 
     case 'messages':
       if (!config.ok) {
