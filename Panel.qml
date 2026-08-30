@@ -662,8 +662,8 @@ Panel {
 
                 // Ragged on purpose: equal-length bars read as a table, not as
                 // conversations waiting to arrive.
-                readonly property real nameFraction: [0.42, 0.3, 0.5, 0.36, 0.46, 0.33][skeletonRow.index % 6]
-                readonly property real previewFraction: [0.78, 0.6, 0.85, 0.68, 0.55, 0.72][skeletonRow.index % 6]
+                readonly property real nameFraction: [0.42, 0.3, 0.5, 0.36, 0.46, 0.33][skeletonRow.index]
+                readonly property real previewFraction: [0.78, 0.6, 0.85, 0.68, 0.55, 0.72][skeletonRow.index]
 
                 Rectangle {
                   id: nameBar
