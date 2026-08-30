@@ -150,14 +150,26 @@ async function waitForConnected(client, timeoutMs = 8000) {
 // then the revalidated one if it differs (docs/daemon-protocol.md). A client
 // applies both and the last one wins, so an assertion about the account's real
 // state has to do the same rather than reading whichever frame arrived first.
-async function settledChats(client, payload = {}) {
+//
+// Nothing on the wire says which request a frame answers, so attribution rests
+// entirely on no earlier one still being outstanding. Waiting for a stretch of
+// silence first is what buys that: a revalidation still in flight lands during
+// the quiet window instead of being counted as this request's second frame.
+// Draining only what has already queued is not enough -- an in-flight frame is
+// not in the backlog yet, and reading a pre-request list as the settled answer
+// is a failure that looks exactly like the daemon getting the order wrong.
+async function quiesceChats(client, quietMs = 300) {
   while (true) {
     try {
-      await client.waitFor((f) => f.t === 'chats', 1)
+      await client.waitFor((f) => f.t === 'chats', quietMs)
     } catch {
-      break
+      return
     }
   }
+}
+
+async function settledChats(client, payload = {}) {
+  await quiesceChats(client)
   client.send({ t: 'chats', ...payload })
   let frame = await client.waitFor((f) => f.t === 'chats')
   try {
