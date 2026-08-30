@@ -37,7 +37,7 @@ Panel {
   readonly property var threadRows: {
     var list = root.messages || []
     var out = []
-    for (var i = list.length - 1; i >= 0; i--) out.push(list[i])
+    for (var i = list.length - 1; i >= 0; i--) out.push(root.threadRow(list[i]))
     return out
   }
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
@@ -195,6 +195,68 @@ Panel {
     }
   }
 
+  // Flat roles only, the same contract chatRow keeps: the delegate resolves
+  // nothing itself, so no message object and no attachment array has to survive
+  // as a nested model value.
+  //
+  // The key is tempId before guid because a send rewrites the guid: the ack
+  // stamps the real one over the temp. Keying on guid would re-identify the row
+  // mid-send, which is the flicker this model exists to remove, so the tempId a
+  // send carries end to end wins wherever it is present.
+  function threadRow(message) {
+    var images = root.imageAttachmentsOf(message)
+    var guids = []
+    for (var i = 0; i < images.length; i++) guids.push(images[i].guid)
+    var text = message.text || ""
+    return {
+      key: message.tempId || message.guid || "",
+      fromMe: message.fromMe === true,
+      sender: message.sender || "",
+      // The daemon substitutes "[attachment]" for attachment-only messages
+      // (docs/daemon-protocol.md); when the image itself is rendered here, that
+      // placeholder is noise.
+      body: text === "[attachment]" && images.length > 0 ? "" : text,
+      imageGuids: guids.join("\n"),
+      ts: message.ts || 0,
+      pending: message.pending === true,
+      failed: message.failed === true
+    }
+  }
+
+  // Reconcile by key rather than reassigning the model, for the reason
+  // syncChatModel gives: a fresh list makes ListView destroy every delegate and
+  // lose its position. A send writes the thread three times (optimistic row,
+  // ack patch, echo), so on a JS-array model that was three full resets, each
+  // one a visible jump until the re-pin caught up a frame later.
+  //
+  // Returns whether a row landed at index 0, which is the newest end.
+  function syncThreadModel() {
+    var desired = root.threadRows
+    var wanted = {}
+    for (var i = 0; i < desired.length; i++) wanted[desired[i].key] = true
+    for (var stale = threadModel.count - 1; stale >= 0; stale--) {
+      if (!wanted[threadModel.get(stale).key]) threadModel.remove(stale)
+    }
+    var addedNewest = false
+    for (var target = 0; target < desired.length; target++) {
+      var row = desired[target]
+      var found = -1
+      for (var scan = target; scan < threadModel.count; scan++) {
+        if (threadModel.get(scan).key !== row.key) continue
+        found = scan
+        break
+      }
+      if (found === -1) {
+        threadModel.insert(target, row)
+        if (target === 0) addedNewest = true
+        continue
+      }
+      if (found !== target) threadModel.move(found, target, 1)
+      threadModel.set(target, row)
+    }
+    return addedNewest
+  }
+
   function moveCursor(delta) {
     var count = root.visibleChats.length
     if (count === 0) return
@@ -229,9 +291,9 @@ Panel {
 
   function previewSelectedMessage() {
     if (root.messageIndex < 0 || !root.client) return
-    var images = root.imageAttachmentsOf(root.threadRows[root.messageIndex])
-    if (!images.length) return
-    root.client.requestPreview(images[0].guid)
+    var row = root.threadRows[root.messageIndex]
+    if (!row || !row.imageGuids.length) return
+    root.client.requestPreview(row.imageGuids.split("\n")[0])
   }
 
   function openThread(chat) {
@@ -298,6 +360,10 @@ Panel {
     root.cursorFollowGuid = chat.guid
   }
 
+  onThreadRowsChanged: {
+    if (root.syncThreadModel()) messageList.pinToNewest()
+  }
+
   onVisibleChatsChanged: {
     root.syncChatModel()
     if (!root.cursorFollowGuid.length) return
@@ -354,15 +420,6 @@ Panel {
   Connections {
     target: root.client
     enabled: root.client !== null
-
-    // A JS-array model is reset wholesale on every reassignment, losing the
-    // scroll position, and a send reassigns three times (optimistic row, ack
-    // patch, echo). Re-pin to the newest message on the property's own change
-    // signal so no write path can forget to.
-    function onActiveMessagesChanged() {
-      if (root.messageIndex >= 0) return
-      Qt.callLater(messageList.pinToNewest)
-    }
 
     function onMessageArrived(chatGuid, message, chat) {
       if (chatGuid !== root.activeGuid || !message) return
@@ -728,11 +785,19 @@ Panel {
             id: messageList
             width: parent.width
             height: Style.space(320)
-            model: root.threadRows
+            model: threadModel
             clip: true
             spacing: Style.space(4)
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            add: Transition {
+              NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 140; easing.type: Easing.OutCubic }
+            }
+
+            displaced: Transition {
+              NumberAnimation { properties: "y"; duration: 140; easing.type: Easing.OutCubic }
+            }
 
             // The newest message is index 0, laid out against the bottom edge.
             //
@@ -750,10 +815,21 @@ Panel {
               messageList.positionViewAtBeginning()
             }
 
+            ListModel {
+              id: threadModel
+              Component.onCompleted: root.syncThreadModel()
+            }
+
             delegate: Item {
               id: bubbleRow
-              required property var modelData
               required property int index
+              required property bool fromMe
+              required property string sender
+              required property string body
+              required property string imageGuids
+              required property double ts
+              required property bool pending
+              required property bool failed
 
               width: ListView.view.width
               implicitHeight: bubble.height
@@ -766,35 +842,37 @@ Panel {
               // width depend on content that depends on the bubble: a binding
               // loop, which collapses every bubble to a few pixels.
               readonly property real maxInner: Math.max(Style.space(60), bubbleRow.width * 0.82 - bubbleRow.pad * 2)
-              readonly property bool showSender: !bubbleRow.modelData.fromMe
+              readonly property bool showSender: !bubbleRow.fromMe
                 && root.threadIsGroup
-                && !!bubbleRow.modelData.sender
-              readonly property var imageAttachments: root.imageAttachmentsOf(bubbleRow.modelData)
+                && !!bubbleRow.sender
+              readonly property var imageAttachments: bubbleRow.imageGuids.length > 0
+                ? bubbleRow.imageGuids.split("\n")
+                : []
               readonly property bool selected: root.messageIndex === bubbleRow.index
               readonly property real imageWidth: bubbleRow.imageAttachments.length > 0
                 ? Math.min(bubbleRow.maxInner, Style.space(180))
                 : 0
-              // The daemon substitutes "[attachment]" for attachment-only
-              // messages (docs/daemon-protocol.md); when the image itself is
-              // rendered here, that placeholder is noise.
-              readonly property string bodyText: {
-                var t = bubbleRow.modelData.text || ""
-                return t === "[attachment]" && bubbleRow.imageAttachments.length > 0 ? "" : t
-              }
 
               Rectangle {
                 id: bubble
                 width: bubbleContent.width + bubbleRow.pad * 2
                 height: bubbleContent.implicitHeight + bubbleRow.pad
-                anchors.right: bubbleRow.modelData.fromMe ? parent.right : undefined
-                anchors.left: bubbleRow.modelData.fromMe ? undefined : parent.left
+                anchors.right: bubbleRow.fromMe ? parent.right : undefined
+                anchors.left: bubbleRow.fromMe ? undefined : parent.left
                 radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
                 border.width: bubbleRow.selected ? 1 : 0
                 border.color: root.accent
-                opacity: bubbleRow.modelData.pending ? 0.6 : 1.0
-                color: bubbleRow.modelData.fromMe
+                opacity: bubbleRow.pending ? 0.6 : 1.0
+                color: bubbleRow.fromMe
                   ? Style.selectedFillFor(root.foreground, root.accent)
                   : Style.normalFillFor(root.foreground, root.accent)
+
+                // The send settles rather than snapping: every other state
+                // change in this panel animates, and a bare opacity flip at the
+                // moment the ack lands reads as a flicker.
+                Behavior on opacity {
+                  NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+                }
 
                 Column {
                   id: bubbleContent
@@ -811,7 +889,7 @@ Panel {
                     id: senderLabel
                     visible: bubbleRow.showSender
                     width: Math.min(implicitWidth, bubbleRow.maxInner)
-                    text: bubbleRow.modelData.sender || ""
+                    text: bubbleRow.sender
                     color: root.accent
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -824,10 +902,10 @@ Panel {
 
                     delegate: Rectangle {
                       id: imageFrame
-                      required property var modelData
+                      required property string modelData
 
                       readonly property string localPath: root.client
-                        ? (root.client.attachmentPaths[imageFrame.modelData.guid] || "")
+                        ? (root.client.attachmentPaths[imageFrame.modelData] || "")
                         : ""
 
                       width: bubbleRow.imageWidth
@@ -837,7 +915,7 @@ Panel {
                       radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
                       color: Style.normalFillFor(root.foreground, root.accent)
 
-                      Component.onCompleted: if (root.client) root.client.requestAttachment(imageFrame.modelData.guid)
+                      Component.onCompleted: if (root.client) root.client.requestAttachment(imageFrame.modelData)
 
                       Image {
                         id: picture
@@ -869,7 +947,7 @@ Panel {
                       MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.client) root.client.requestPreview(imageFrame.modelData.guid)
+                        onClicked: if (root.client) root.client.requestPreview(imageFrame.modelData)
                       }
                     }
                   }
@@ -878,7 +956,7 @@ Panel {
                     id: bodyLabel
                     visible: text.length > 0
                     width: Math.min(implicitWidth, bubbleRow.maxInner)
-                    text: bubbleRow.bodyText
+                    text: bubbleRow.body
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
@@ -890,11 +968,11 @@ Panel {
                     width: parent.width
                     horizontalAlignment: Text.AlignRight
                     text: {
-                      if (bubbleRow.modelData.failed) return "failed"
-                      if (bubbleRow.modelData.pending) return "sending…"
-                      return root.clockTime(bubbleRow.modelData.ts)
+                      if (bubbleRow.failed) return "failed"
+                      if (bubbleRow.pending) return "sending…"
+                      return root.clockTime(bubbleRow.ts)
                     }
-                    color: bubbleRow.modelData.failed ? root.accent : root.secondaryForeground
+                    color: bubbleRow.failed ? root.accent : root.secondaryForeground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
