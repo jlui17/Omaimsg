@@ -27,6 +27,7 @@ Panel {
   // "search" | "chats" | "messages" | "composer"
   property string focusSection: "chats"
   property string filterText: ""
+  property bool unreadOnly: false
 
   readonly property var chats: client ? client.chats : []
   readonly property string activeGuid: client ? client.activeChatGuid : ""
@@ -65,6 +66,13 @@ Panel {
     var epoch = root.client ? root.client.chatsEpoch : 0
     if (epoch < 0) return []
     var list = root.chats || []
+    if (root.unreadOnly) {
+      var unreads = []
+      for (var u = 0; u < list.length; u++) {
+        if (list[u] && (list[u].unread || 0) > 0) unreads.push(list[u])
+      }
+      list = unreads
+    }
     var needle = root.filterText.toLowerCase()
     if (needle.length > 0) {
       var matches = []
@@ -149,6 +157,8 @@ Panel {
     return n > 99 ? "99+" : String(n)
   }
 
+  // A guid that has left the list keeps the index rather than the chat, so the
+  // cursor lands on whichever row slid up into the slot.
   function cursorToGuid(guid) {
     for (var i = 0; i < root.visibleChats.length; i++) {
       if (root.visibleChats[i].guid !== guid) continue
@@ -156,6 +166,13 @@ Panel {
       chatList.positionViewAtIndex(i, ListView.Contain)
       return
     }
+    var count = root.visibleChats.length
+    if (count === 0) {
+      root.cursorIndex = 0
+      return
+    }
+    root.cursorIndex = Math.min(root.cursorIndex, count - 1)
+    chatList.positionViewAtIndex(root.cursorIndex, ListView.Contain)
   }
 
   function imageAttachmentsOf(message) {
@@ -315,15 +332,26 @@ Panel {
     root.openThread(root.chatAt(root.cursorIndex))
   }
 
+  // A filter should see more conversations than the list renders, so the deep
+  // page stands for as long as either one is up.
+  function syncChatPage() {
+    if (!root.client) return
+    root.client.requestChats(root.searching || root.unreadOnly ? 200 : root.chatLimit)
+  }
+
   function beginSearch() {
     root.focusSection = "search"
     Qt.callLater(function () { searchField.forceActiveFocus() })
     if (root.searching) return
     root.searching = true
     root.cursorIndex = 0
-    // The filter should see more conversations than the list renders, so pull a
-    // deeper page for as long as search is up.
-    if (root.client) root.client.requestChats(200)
+    root.syncChatPage()
+  }
+
+  function toggleUnreadOnly() {
+    root.unreadOnly = !root.unreadOnly
+    root.cursorIndex = 0
+    root.syncChatPage()
   }
 
   // Drops the filter and the deep page without touching focus: callers decide
@@ -333,7 +361,7 @@ Panel {
     searchField.text = ""
     root.filterText = ""
     root.cursorIndex = 0
-    if (root.client) root.client.requestChats(root.chatLimit)
+    root.syncChatPage()
   }
 
   function exitSearch() {
@@ -467,6 +495,7 @@ Panel {
       onCloseRequested: {
         if (root.view === "thread") root.backToChats()
         else if (root.searching) root.exitSearch()
+        else if (root.unreadOnly) root.toggleUnreadOnly()
         else root.close()
       }
       // `l` and `h` are the depth axis: deeper into a thread, back out of it.
@@ -483,6 +512,7 @@ Panel {
         }
         if (dx < 0) {
           if (root.searching) root.exitSearch()
+          else if (root.unreadOnly) root.toggleUnreadOnly()
           return
         }
         root.moveCursor(dy)
@@ -498,6 +528,7 @@ Panel {
           return
         }
         if (text === "p") root.togglePin(root.chatAt(root.cursorIndex))
+        else if (text === "u") root.toggleUnreadOnly()
         else if (text === "/") root.beginSearch()
       }
 
@@ -554,7 +585,9 @@ Panel {
                 if (root.statusLine.length > 0) return root.statusLine
                 if (root.view === "thread") return ""
                 var unread = root.client ? root.client.unread : 0
-                return unread > 0 ? unread + " unread" : ""
+                var label = unread > 0 ? unread + " unread" : ""
+                if (!root.unreadOnly) return label
+                return label.length > 0 ? label + " · unread only" : "unread only"
               }
               visible: text.length > 0
               color: root.statusLine.length > 0 ? root.accent : root.secondaryForeground
@@ -628,7 +661,11 @@ Panel {
           Text {
             width: parent.width
             visible: root.chatsSettledEmpty
-            text: root.filterText.length > 0 ? "No matches." : "No conversations yet."
+            text: {
+              if (root.filterText.length > 0) return "No matches."
+              if (root.unreadOnly) return "No unread conversations."
+              return "No conversations yet."
+            }
             color: root.secondaryForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body

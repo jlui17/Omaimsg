@@ -1,6 +1,6 @@
 # omaimsg
 
-Proof of concept: iMessage in the Omarchy menu bar. A bar-widget plugin (Quickshell QML popup: chat list, thread view, compose) backed by a Node daemon that talks to a [BlueBubbles](https://bluebubbles.app) server running on a Mac. Keyboard-native: `j`/`k` through chats and through a thread's messages, `Enter` or `l` opens a thread or previews a selected image, `i` focuses the composer, `Enter` sends, `Esc` or `h` walks back out a layer at a time.
+Proof of concept: iMessage in the Omarchy menu bar. A bar-widget plugin (Quickshell QML popup: chat list, thread view, compose) backed by a Node daemon that talks to a [BlueBubbles](https://bluebubbles.app) server running on a Mac. Keyboard-native: `j`/`k` through chats and through a thread's messages, `Enter` or `l` opens a thread or previews a selected image, `i` focuses the composer, `Enter` sends, `u` narrows the list to chats with unread messages, `Esc` or `h` walks back out a layer at a time.
 
 Prototype code answering one question: is a keyboard-driven iMessage popup in the bar actually pleasant to use? Bridge choice, plugin architecture, and the precedents this copies are in `docs/research/`; the daemon↔plugin wire contract is `docs/daemon-protocol.md`.
 
