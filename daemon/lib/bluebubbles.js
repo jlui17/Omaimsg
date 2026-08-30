@@ -315,7 +315,11 @@ function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const attachments = (bbMessage.attachments || []).map((a) => ({
     guid: a.guid,
     mime: a.mimeType || '',
-    name: a.transferName || ''
+    name: a.transferName || '',
+    // Only when both are usable: the UI reserves a box from the ratio, and a
+    // zero or a missing side would have it reserve nothing. Verified present on
+    // a real server's attachment objects alongside uti/mimeType/transferName.
+    ...(a.width > 0 && a.height > 0 ? { width: a.width, height: a.height } : {})
   }))
   return {
     guid: bbMessage.guid,
