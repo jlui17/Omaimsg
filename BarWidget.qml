@@ -79,7 +79,7 @@ BarWidget {
     active: root.unread > 0
     dimmed: !client.linkUp
     tooltipText: {
-      if (!client.linkUp) return "Omaimsg · daemon offline"
+      if (!client.linkUp) return client.daemonStarting ? "Omaimsg · starting daemon" : "Omaimsg · daemon offline"
       if (root.unread > 0) return "Omaimsg · " + root.unread + " unread"
       return "Omaimsg"
     }
