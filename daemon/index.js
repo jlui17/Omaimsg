@@ -106,8 +106,10 @@ async function handleCommand(payload, reply) {
       // costlier of the two to answer cold: the fetch behind it pages the
       // entire account, so a client holding a list should never wait on it.
       // Every inbound message keeps the store current, so the cached answer is
-      // usually already the right one.
-      const servedChats = store.hasChats() ? store.chatList().slice(0, limit) : null
+      // usually already the right one. It has to be a swept list though, not
+      // merely a non-empty map: a push can seed a single chat before any client
+      // has asked for the list.
+      const servedChats = store.hasFullChatList() ? store.chatList().slice(0, limit) : null
       if (servedChats) reply({ t: 'chats', chats: servedChats, unread: store.totalUnread() })
       try {
         store.replaceChats(await session.chats())

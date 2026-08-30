@@ -4278,6 +4278,7 @@ class Store {
     this.chats = new Map;
     this.threads = new Map;
     this.pins = new PinStore;
+    this.sweptChats = false;
   }
   cachedThread(chatGuid) {
     const thread = this.threads.get(chatGuid);
@@ -4314,10 +4315,11 @@ class Store {
     if (chat)
       chat.pinned = pinned;
   }
-  hasChats() {
-    return this.chats.size > 0;
+  hasFullChatList() {
+    return this.sweptChats;
   }
   replaceChats(normalizedChats) {
+    this.sweptChats = true;
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid);
       this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) });
@@ -7445,7 +7447,7 @@ async function handleCommand(payload, reply) {
         return;
       }
       const limit = payload.limit || 40;
-      const servedChats = store.hasChats() ? store.chatList().slice(0, limit) : null;
+      const servedChats = store.hasFullChatList() ? store.chatList().slice(0, limit) : null;
       if (servedChats)
         reply({ t: "chats", chats: servedChats, unread: store.totalUnread() });
       try {
