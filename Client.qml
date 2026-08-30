@@ -16,6 +16,11 @@ Item {
   property string pluginDir: ""
   property string socketPath: ""
   property bool autostartDaemon: true
+  // How many chats a request asks for. Owned here because the link-up prefetch
+  // needs it before any panel is involved: prefetching a smaller page than the
+  // panel wants leaves the list short for as long as the age gate holds off the
+  // next request.
+  property int chatLimit: 40
 
   readonly property string defaultSocketPath: {
     var runtime = Quickshell.env("XDG_RUNTIME_DIR")
@@ -100,7 +105,7 @@ Item {
     root.requestChats()
   }
   function requestChats(limit) {
-    if (!request({ t: "chats", limit: limit || 40 })) return false
+    if (!request({ t: "chats", limit: limit || root.chatLimit })) return false
     root.chatsPending = true
     return true
   }

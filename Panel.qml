@@ -41,7 +41,7 @@ Panel {
     return out
   }
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
-  readonly property int chatLimit: root.setting("chatLimit", 40)
+  readonly property int chatLimit: root.client ? root.client.chatLimit : 40
   readonly property int messageLimit: root.setting("messageLimit", 60)
   // Relative timestamps are computed client-side, so a list this old is stale
   // only in the sense that a message could have arrived with the daemon's
