@@ -63,6 +63,13 @@ Item {
   // connected. Only the connectionStateChanged signal and inbound frames are
   // trustworthy, so liveness is tracked here instead.
   property bool linkUp: false
+  // The retry the daemon launch was attempted on, -1 before any attempt.
+  property int daemonStartRetry: -1
+  // A launch that has not yet had time to land. Cleared by the link coming up,
+  // and given up on a few retries after the attempt so a daemon that is never
+  // going to start stops claiming it is on its way.
+  readonly property bool daemonStarting: root.autostartDaemon
+    && (root.daemonStartRetry < 0 || root.retryCount <= root.daemonStartRetry + 3)
   property double lastFrameMs: 0
   property int retryCount: 0
 
@@ -283,6 +290,7 @@ Item {
 
   function startDaemon() {
     if (!pluginDir || pluginDir.length === 0) return
+    root.daemonStartRetry = root.retryCount
     daemonStarter.running = true
   }
 
@@ -309,6 +317,7 @@ Item {
       root.lastSocketError = ""
       root.linkUp = true
       root.retryCount = 0
+      root.daemonStartRetry = -1
       root.lastFrameMs = Date.now()
       retryTimer.stop()
       // Requests in flight across a reconnect got no reply and never will;
@@ -449,7 +458,10 @@ Item {
         return
       }
       root.retryCount += 1
-      if (root.autostartDaemon && root.retryCount === 3) root.startDaemon()
+      // On the first retry, not the third: at this backoff that was about six
+      // and a half seconds of doing nothing before node was even launched,
+      // which on a fresh boot is the whole first impression of the bar.
+      if (root.autostartDaemon && root.retryCount === 1) root.startDaemon()
       root.reconnectSocket()
     }
   }

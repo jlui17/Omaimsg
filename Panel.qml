@@ -91,8 +91,14 @@ Panel {
   readonly property bool threadIsGroup: root.activeChat ? root.activeChat.isGroup === true : false
 
   readonly property string connectionStrip: {
-    if (!root.linkUp)
-      return "Daemon offline" + root.detail(root.client ? root.client.lastSocketError : "")
+    if (!root.linkUp) {
+      // A socket error while the launch is still in flight is the expected
+      // noise of a daemon that is not up yet, so it is not worth reporting.
+      if (root.client && root.client.daemonStarting) return "Starting daemon…"
+      // No socket detail: lastSocketError is a QLocalSocket error enum, so it
+      // renders as a bare number that means nothing to whoever reads the strip.
+      return "Daemon offline"
+    }
     if (root.client && root.client.connection === "connected") return ""
     var label = root.client && root.client.connection === "error"
       ? "BlueBubbles unreachable"
