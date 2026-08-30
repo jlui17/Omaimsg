@@ -141,26 +141,12 @@ const server = createServer(async (req, res) => {
       return
     }
 
-    // Like silent-message, but emitted over the socket too: an inbound message
-    // the daemon learns about from the push alone. Deliberately does not
-    // schedule a reply, so it lands once and changes nothing later.
-    if (req.method === 'POST' && url.pathname === '/__test/push-message') {
-      const { chatGuid, text } = await readBody(req)
-      const chat = chats.get(chatGuid)
-      const list = messages.get(chatGuid)
-      if (!chat || !list) {
-        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
-        return
-      }
-      const pushed = buildMessage({ chat, text, fromMe: false, ts: Date.now() })
-      list.push(pushed)
-      chat.lastMessage = pushed
-      sendJson(res, 200, envelope(pushed))
-      io.emit('new-message', pushed)
-      return
-    }
-
-    if (req.method === 'POST' && url.pathname === '/__test/silent-message') {
+    // Two ways to plant an inbound message. silent-message leaves the daemon
+    // unaware until it next fetches, which is what makes a revalidation
+    // observable; push-message also emits it, so the daemon learns from the
+    // push alone. Neither schedules a reply, so both land once and change
+    // nothing later.
+    if (req.method === 'POST' && ['/__test/silent-message', '/__test/push-message'].includes(url.pathname)) {
       const { chatGuid, text } = await readBody(req)
       const chat = chats.get(chatGuid)
       const list = messages.get(chatGuid)
@@ -172,6 +158,7 @@ const server = createServer(async (req, res) => {
       list.push(message)
       chat.lastMessage = message
       sendJson(res, 200, envelope(message))
+      if (url.pathname === '/__test/push-message') io.emit('new-message', message)
       return
     }
 
