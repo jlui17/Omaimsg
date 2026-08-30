@@ -48,6 +48,7 @@ BarWidget {
     id: client
     pluginDir: root.pluginDir
     socketPath: root.setting("socketPath", "")
+    chatLimit: root.setting("chatLimit", 40)
     autostartDaemon: root.setting("autostartDaemon", true) === true
   }
 
