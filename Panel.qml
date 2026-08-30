@@ -233,9 +233,6 @@ Panel {
   // send carries end to end wins wherever it is present.
   function threadRow(message) {
     var images = root.imageAttachmentsOf(message)
-    var packed = []
-    for (var i = 0; i < images.length; i++)
-      packed.push([images[i].guid, images[i].width || 0, images[i].height || 0].join("\t"))
     var text = message.text || ""
     return {
       key: message.tempId || message.guid || "",
@@ -245,7 +242,7 @@ Panel {
       // (docs/daemon-protocol.md); when the image itself is rendered here, that
       // placeholder is noise.
       body: text === "[attachment]" && images.length > 0 ? "" : text,
-      images: packed.join("\n"),
+      images: JSON.stringify(images),
       ts: message.ts || 0,
       pending: message.pending === true,
       failed: message.failed === true
@@ -294,8 +291,10 @@ Panel {
   function previewSelectedMessage() {
     if (root.messageIndex < 0 || !root.client) return
     var row = root.threadRows[root.messageIndex]
-    if (!row || !row.images.length) return
-    root.client.requestPreview(row.images.split("\n")[0].split("\t")[0])
+    if (!row) return
+    var images = JSON.parse(row.images)
+    if (!images.length) return
+    root.client.requestPreview(images[0].guid)
   }
 
   function openThread(chat) {
@@ -903,16 +902,10 @@ Panel {
               readonly property bool showSender: !bubbleRow.fromMe
                 && root.threadIsGroup
                 && !!bubbleRow.sender
-              readonly property var imageAttachments: {
-                if (!bubbleRow.images.length) return []
-                var lines = bubbleRow.images.split("\n")
-                var out = []
-                for (var i = 0; i < lines.length; i++) {
-                  var parts = lines[i].split("\t")
-                  out.push({ guid: parts[0], width: Number(parts[1]) || 0, height: Number(parts[2]) || 0 })
-                }
-                return out
-              }
+              // A ListModel role cannot hold an array: a nested one comes
+              // back as another ListModel, not the objects that went in, so
+              // the row carries the images serialised instead.
+              readonly property var imageAttachments: JSON.parse(bubbleRow.images)
               readonly property bool selected: root.messageIndex === bubbleRow.index
               readonly property real imageWidth: bubbleRow.imageAttachments.length > 0
                 ? Math.min(bubbleRow.maxInner, Style.space(180))
