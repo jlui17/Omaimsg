@@ -212,17 +212,23 @@ function scheduleReply(chatGuid) {
   }, REPLY_DELAY_MS).unref()
 }
 
-setInterval(() => {
-  const guids = [...chats.keys()]
-  const chatGuid = pick(guids)
-  const chat = chats.get(chatGuid)
-  const list = messages.get(chatGuid)
-  const message = buildMessage({ chat, text: pick(BANK), fromMe: false, ts: Date.now() })
-  list.push(message)
-  chat.lastMessage = message
-  io.emit('new-message', message)
-  log('unprompted message', chatGuid)
-}, UNPROMPTED_INTERVAL_MS).unref()
+// Inbound traffic nobody asked for: useful when driving this mock by hand to
+// watch pushes land in the panel, and poison inside an assertion suite, because
+// it bumps a chat picked at random to the top of the list at a moment no test
+// controls. Opt-in, and smoke does not opt in.
+if (process.env.MOCK_BB_UNPROMPTED === '1') {
+  setInterval(() => {
+    const guids = [...chats.keys()]
+    const chatGuid = pick(guids)
+    const chat = chats.get(chatGuid)
+    const list = messages.get(chatGuid)
+    const message = buildMessage({ chat, text: pick(BANK), fromMe: false, ts: Date.now() })
+    list.push(message)
+    chat.lastMessage = message
+    io.emit('new-message', message)
+    log('unprompted message', chatGuid)
+  }, UNPROMPTED_INTERVAL_MS).unref()
+}
 
 server.listen(PORT, () => {
   log(`listening on http://localhost:${PORT} (password: ${PASSWORD})`)
