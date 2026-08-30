@@ -152,12 +152,9 @@ async function waitForConnected(client, timeoutMs = 8000) {
 // state has to do the same rather than reading whichever frame arrived first.
 //
 // Nothing on the wire says which request a frame answers, so attribution rests
-// entirely on no earlier one still being outstanding. Waiting for a stretch of
-// silence first is what buys that: a revalidation still in flight lands during
-// the quiet window instead of being counted as this request's second frame.
-// Draining only what has already queued is not enough -- an in-flight frame is
-// not in the backlog yet, and reading a pre-request list as the settled answer
-// is a failure that looks exactly like the daemon getting the order wrong.
+// on no earlier one still being outstanding. Draining the backlog cannot buy
+// that, because a frame still in flight is not in it yet; waiting for silence
+// can.
 async function quiesceChats(client, quietMs = 300) {
   while (true) {
     try {
