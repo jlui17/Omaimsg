@@ -201,6 +201,26 @@ Item {
     return true
   }
 
+  // A page fetched from BlueBubbles knows nothing about tempId, so a row this
+  // client sent comes back identified only by guid. Carrying the tempId across
+  // keeps that row's identity stable for the thread model, which keys on
+  // tempId first: without this, the newest bubble is removed and re-inserted on
+  // the next reload rather than patched in place.
+  function withKnownTempIds(list) {
+    var byGuid = {}
+    for (var i = 0; i < root.activeMessages.length; i++) {
+      var known = root.activeMessages[i]
+      if (known && known.tempId && known.guid) byGuid[known.guid] = known.tempId
+    }
+    var out = []
+    for (var n = 0; n < list.length; n++) {
+      var row = list[n]
+      var tempId = row && !row.tempId ? byGuid[row.guid] : ""
+      out.push(tempId ? Object.assign({}, row, { tempId: tempId }) : row)
+    }
+    return out
+  }
+
   // The cache is written on every mutation, not only on load, so an optimistic
   // row and its ack survive leaving the thread and coming back.
   function setActiveMessages(list) {
@@ -376,7 +396,7 @@ Item {
 
       case "messages":
         if ((frame.chatGuid || "") === root.activeChatGuid) {
-          root.setActiveMessages(frame.messages || [])
+          root.setActiveMessages(root.withKnownTempIds(frame.messages || []))
         }
         break
 
