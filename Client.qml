@@ -34,6 +34,10 @@ Item {
   // coming up asks for the list, and a panel opened before that reply lands
   // would otherwise ask again for the same window.
   property bool chatsPending: false
+  // Distinct from "the list is empty": until a chats frame has landed, the
+  // panel has no grounds to claim anything about the account. An error does not
+  // set this -- a failed fetch is not evidence of no conversations.
+  property bool chatsLoaded: false
   property string lastSocketError: ""
 
   property string activeChatGuid: ""
@@ -355,6 +359,7 @@ Item {
 
       case "chats":
         root.chatsPending = false
+        root.chatsLoaded = true
         root.lastChatsMs = Date.now()
         root.setChats(frame.chats || [])
         if (frame.unread !== undefined) root.unread = frame.unread || 0

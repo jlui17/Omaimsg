@@ -77,6 +77,17 @@ Panel {
     return list.slice(0, Math.max(1, root.chatLimit))
   }
 
+  // Three states, not two: a fetch in flight is not an empty account, and a
+  // failed one is not either. Only a landed frame licenses "No conversations
+  // yet."; an error leaves both off and lets the connection strip do the
+  // talking.
+  readonly property bool chatsLoading: root.client
+    ? root.client.chatsPending === true && root.client.chatsLoaded !== true
+    : false
+  readonly property bool chatsSettledEmpty: root.client
+    ? root.client.chatsLoaded === true && root.visibleChats.length === 0
+    : false
+
   readonly property bool threadIsGroup: root.activeChat ? root.activeChat.isGroup === true : false
 
   readonly property string connectionStrip: {
@@ -626,11 +637,65 @@ Panel {
 
           Text {
             width: parent.width
-            visible: root.visibleChats.length === 0
+            visible: root.chatsSettledEmpty
             text: root.filterText.length > 0 ? "No matches." : "No conversations yet."
             color: root.secondaryForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
+          }
+
+          // Placeholder rows rather than a spinner: they hold the list at the
+          // height the real one will occupy, so the popup does not grow when
+          // the chats land. One animation drives all of them.
+          Column {
+            id: chatSkeleton
+            width: parent.width
+            visible: root.chatsLoading
+            spacing: Style.space(1)
+
+            SequentialAnimation on opacity {
+              running: chatSkeleton.visible
+              loops: Animation.Infinite
+              NumberAnimation { to: 0.35; duration: 640; easing.type: Easing.InOutSine }
+              NumberAnimation { to: 0.75; duration: 640; easing.type: Easing.InOutSine }
+            }
+
+            Repeater {
+              model: 6
+
+              delegate: Item {
+                id: skeletonRow
+                required property int index
+
+                width: chatSkeleton.width
+                height: Style.space(10) + nameBar.height + previewBar.height + Style.space(3)
+
+                // Ragged on purpose: equal-length bars read as a table, not as
+                // conversations waiting to arrive.
+                readonly property real nameFraction: [0.42, 0.3, 0.5, 0.36, 0.46, 0.33][skeletonRow.index % 6]
+                readonly property real previewFraction: [0.78, 0.6, 0.85, 0.68, 0.55, 0.72][skeletonRow.index % 6]
+
+                Rectangle {
+                  id: nameBar
+                  x: Style.space(8)
+                  y: Style.space(5)
+                  width: Math.max(Style.space(40), skeletonRow.width * skeletonRow.nameFraction)
+                  height: Style.font.body
+                  radius: height / 2
+                  color: Style.normalFillFor(root.foreground, root.accent)
+                }
+
+                Rectangle {
+                  id: previewBar
+                  x: Style.space(8)
+                  y: nameBar.y + nameBar.height + Style.space(3)
+                  width: Math.max(Style.space(60), skeletonRow.width * skeletonRow.previewFraction)
+                  height: Style.font.caption
+                  radius: height / 2
+                  color: Style.normalFillFor(root.foreground, root.accent)
+                }
+              }
+            }
           }
 
           ListView {
