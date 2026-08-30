@@ -31,6 +31,15 @@ Panel {
   readonly property var chats: client ? client.chats : []
   readonly property string activeGuid: client ? client.activeChatGuid : ""
   readonly property var messages: client ? client.activeMessages : []
+  // The daemon sends a thread oldest-first; the list renders it bottom-to-top
+  // from the newest, so index 0 here is the most recent message. messageIndex
+  // and every delegate index count in this order.
+  readonly property var threadRows: {
+    var list = root.messages || []
+    var out = []
+    for (var i = list.length - 1; i >= 0; i--) out.push(list[i])
+    return out
+  }
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
   readonly property int chatLimit: root.setting("chatLimit", 40)
   readonly property int messageLimit: root.setting("messageLimit", 60)
@@ -197,26 +206,30 @@ Panel {
   // `k` from no selection starts at the latest message; `j` past the latest
   // drops back to no selection, so the newest end is where the cursor enters
   // and leaves.
+  //
+  // The index runs newest-first, so moving up the screen (`k`, delta -1) means
+  // counting up: the subtraction is what keeps the keys pointing where they
+  // look, not an inverted control.
   function moveMessageCursor(delta) {
-    var count = root.messages.length
+    var count = root.threadRows.length
     if (count === 0) return
     if (root.messageIndex < 0) {
       if (delta > 0) return
-      root.messageIndex = count - 1
+      root.messageIndex = 0
     } else {
-      var next = root.messageIndex + delta
-      if (next >= count) {
+      var next = root.messageIndex - delta
+      if (next < 0) {
         root.messageIndex = -1
         return
       }
-      root.messageIndex = Math.max(0, next)
+      root.messageIndex = Math.min(count - 1, next)
     }
     messageList.positionViewAtIndex(root.messageIndex, ListView.Contain)
   }
 
   function previewSelectedMessage() {
     if (root.messageIndex < 0 || !root.client) return
-    var images = root.imageAttachmentsOf(root.messages[root.messageIndex])
+    var images = root.imageAttachmentsOf(root.threadRows[root.messageIndex])
     if (!images.length) return
     root.client.requestPreview(images[0].guid)
   }
@@ -348,7 +361,7 @@ Panel {
     // signal so no write path can forget to.
     function onActiveMessagesChanged() {
       if (root.messageIndex >= 0) return
-      Qt.callLater(function () { messageList.positionViewAtEnd() })
+      Qt.callLater(messageList.pinToNewest)
     }
 
     function onMessageArrived(chatGuid, message, chat) {
@@ -705,6 +718,7 @@ Panel {
           spacing: Style.space(6)
           visible: root.view === "thread"
           opacity: visible ? 1 : 0
+          onVisibleChanged: if (visible) Qt.callLater(messageList.pinToNewest)
 
           Behavior on opacity {
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
@@ -714,11 +728,27 @@ Panel {
             id: messageList
             width: parent.width
             height: Style.space(320)
-            model: root.messages
+            model: root.threadRows
             clip: true
             spacing: Style.space(4)
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            // The newest message is index 0, laid out against the bottom edge.
+            //
+            // Scrolling to the bottom of an oldest-first list cannot be done
+            // reliably: a ListView builds only the delegates near the viewport
+            // and extrapolates contentHeight from their average height, so with
+            // images out of view that figure is a guess, and "go to
+            // contentHeight - height" goes to the wrong place. Laid out this way
+            // the newest message is at a fixed position that owes nothing to the
+            // content's height, so nothing an image does later can move it.
+            verticalLayoutDirection: ListView.BottomToTop
+
+            function pinToNewest() {
+              if (root.messageIndex >= 0) return
+              messageList.positionViewAtBeginning()
+            }
 
             delegate: Item {
               id: bubbleRow
