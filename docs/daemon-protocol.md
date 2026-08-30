@@ -40,7 +40,7 @@ Chat    { guid, name, isGroup, pinned, lastMessage: { text, ts, fromMe }, unread
 Chat-list order: pinned chats first, then unpinned; most-recent lastMessage.ts first within each block, chats with no lastMessage at the end of their block.
 Message { guid, text, ts, fromMe, sender, attachments?, tempId? }   // ts = unix ms; sender = display name, "" when fromMe; tempId only on echoed own sends
 
-Message.attachments: [{ guid, mime, name }], present only when non-empty. `mime` is the original mimeType ("" when BlueBubbles omits it) -- the UI decides what to render from it; the downloaded file for an image may still be PNG (server-side resize re-encodes).
+Message.attachments: [{ guid, mime, name, width?, height? }], present only when non-empty. `width`/`height` are the original pixel dimensions, present only when BlueBubbles reports both as non-zero, so the UI can reserve an image's box before the file arrives; the downloaded thumbnail keeps this aspect ratio. `mime` is the original mimeType ("" when BlueBubbles omits it) -- the UI decides what to render from it; the downloaded file for an image may still be PNG (server-side resize re-encodes).
 ```
 
 Unread counts are daemon-owned, in-memory only (reset on daemon restart): +1 per inbound message to a chat that isn't marked read since, cleared by `read`.

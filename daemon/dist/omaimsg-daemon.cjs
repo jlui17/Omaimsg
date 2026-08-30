@@ -7358,7 +7358,8 @@ function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   const attachments = (bbMessage.attachments || []).map((a) => ({
     guid: a.guid,
     mime: a.mimeType || "",
-    name: a.transferName || ""
+    name: a.transferName || "",
+    ...a.width > 0 && a.height > 0 ? { width: a.width, height: a.height } : {}
   }));
   return {
     guid: bbMessage.guid,

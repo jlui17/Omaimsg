@@ -403,6 +403,12 @@ async function main() {
     JSON.stringify(attachmentMessage?.attachments)
   )
   report(
+    'attachment carries the pixel dimensions the UI reserves its box from',
+    attachmentMessage?.attachments?.[0]?.width === ATTACHMENT_TEST.width
+      && attachmentMessage?.attachments?.[0]?.height === ATTACHMENT_TEST.height,
+    JSON.stringify(attachmentMessage?.attachments?.[0])
+  )
+  report(
     'attachment-only message keeps "[attachment]" placeholder text',
     attachmentMessage?.text === '[attachment]',
     JSON.stringify(attachmentMessage?.text)

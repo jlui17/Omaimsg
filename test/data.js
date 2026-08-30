@@ -83,7 +83,7 @@ export const UNNAMED_GROUP_TEST_CHAT = { guid: 'iMessage;+;chat1122334455', expe
 // mock's download route serves for it: a 1x1 PNG, exported so smoke.js can
 // byte-compare what the daemon wrote to disk.
 export const ATTACHMENT_TEST_CHAT = CHAT_DEFS[0].guid
-export const ATTACHMENT_TEST = { guid: 'MOCK-ATTACHMENT-1', mimeType: 'image/png', transferName: 'photo.png' }
+export const ATTACHMENT_TEST = { guid: 'MOCK-ATTACHMENT-1', mimeType: 'image/png', transferName: 'photo.png', width: 750, height: 1000 }
 export const ATTACHMENT_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'

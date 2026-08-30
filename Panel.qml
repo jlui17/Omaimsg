@@ -222,8 +222,9 @@ Panel {
   // send carries end to end wins wherever it is present.
   function threadRow(message) {
     var images = root.imageAttachmentsOf(message)
-    var guids = []
-    for (var i = 0; i < images.length; i++) guids.push(images[i].guid)
+    var packed = []
+    for (var i = 0; i < images.length; i++)
+      packed.push([images[i].guid, images[i].width || 0, images[i].height || 0].join("\t"))
     var text = message.text || ""
     return {
       key: message.tempId || message.guid || "",
@@ -233,7 +234,7 @@ Panel {
       // (docs/daemon-protocol.md); when the image itself is rendered here, that
       // placeholder is noise.
       body: text === "[attachment]" && images.length > 0 ? "" : text,
-      imageGuids: guids.join("\n"),
+      images: packed.join("\n"),
       ts: message.ts || 0,
       pending: message.pending === true,
       failed: message.failed === true
@@ -309,8 +310,8 @@ Panel {
   function previewSelectedMessage() {
     if (root.messageIndex < 0 || !root.client) return
     var row = root.threadRows[root.messageIndex]
-    if (!row || !row.imageGuids.length) return
-    root.client.requestPreview(row.imageGuids.split("\n")[0])
+    if (!row || !row.images.length) return
+    root.client.requestPreview(row.images.split("\n")[0].split("\t")[0])
   }
 
   function openThread(chat) {
@@ -899,7 +900,7 @@ Panel {
               required property bool fromMe
               required property string sender
               required property string body
-              required property string imageGuids
+              required property string images
               required property double ts
               required property bool pending
               required property bool failed
@@ -918,9 +919,16 @@ Panel {
               readonly property bool showSender: !bubbleRow.fromMe
                 && root.threadIsGroup
                 && !!bubbleRow.sender
-              readonly property var imageAttachments: bubbleRow.imageGuids.length > 0
-                ? bubbleRow.imageGuids.split("\n")
-                : []
+              readonly property var imageAttachments: {
+                if (!bubbleRow.images.length) return []
+                var lines = bubbleRow.images.split("\n")
+                var out = []
+                for (var i = 0; i < lines.length; i++) {
+                  var parts = lines[i].split("\t")
+                  out.push({ guid: parts[0], width: Number(parts[1]) || 0, height: Number(parts[2]) || 0 })
+                }
+                return out
+              }
               readonly property bool selected: root.messageIndex === bubbleRow.index
               readonly property real imageWidth: bubbleRow.imageAttachments.length > 0
                 ? Math.min(bubbleRow.maxInner, Style.space(180))
@@ -975,20 +983,32 @@ Panel {
 
                     delegate: Rectangle {
                       id: imageFrame
-                      required property string modelData
+                      required property var modelData
 
                       readonly property string localPath: root.client
-                        ? (root.client.attachmentPaths[imageFrame.modelData] || "")
+                        ? (root.client.attachmentPaths[imageFrame.modelData.guid] || "")
                         : ""
+                      // The dimensions the server reported, which the resized
+                      // thumbnail preserves. Preferred over the decoded image
+                      // even once that is ready: switching between them is the
+                      // relayout this is here to avoid.
+                      readonly property real declaredRatio: imageFrame.modelData.width > 0
+                        && imageFrame.modelData.height > 0
+                        ? imageFrame.modelData.height / imageFrame.modelData.width
+                        : 0
 
                       width: bubbleRow.imageWidth
-                      height: picture.status === Image.Ready
-                        ? Math.max(1, Math.round(width * picture.implicitHeight / Math.max(1, picture.implicitWidth)))
-                        : Style.space(100)
+                      height: {
+                        if (imageFrame.declaredRatio > 0)
+                          return Math.max(1, Math.round(width * imageFrame.declaredRatio))
+                        if (picture.status === Image.Ready)
+                          return Math.max(1, Math.round(width * picture.implicitHeight / Math.max(1, picture.implicitWidth)))
+                        return Style.space(100)
+                      }
                       radius: Style.cornerRadius > 0 ? Style.cornerRadius : Style.space(6)
                       color: Style.normalFillFor(root.foreground, root.accent)
 
-                      Component.onCompleted: if (root.client) root.client.requestAttachment(imageFrame.modelData)
+                      Component.onCompleted: if (root.client) root.client.requestAttachment(imageFrame.modelData.guid)
 
                       Image {
                         id: picture
@@ -1020,7 +1040,7 @@ Panel {
                       MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: if (root.client) root.client.requestPreview(imageFrame.modelData)
+                        onClicked: if (root.client) root.client.requestPreview(imageFrame.modelData.guid)
                       }
                     }
                   }
