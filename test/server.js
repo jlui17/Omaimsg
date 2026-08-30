@@ -14,6 +14,7 @@ const { chats, messages } = buildStore()
 // way to change a chat server-side WITHOUT the socket push, which is what
 // leaves the daemon's cache stale enough to need revalidating.
 let messageFetchDelayMs = 0
+let chatFetchDelayMs = 0
 
 function log(...args) {
   console.error('omaimsg-mock:', ...args)
@@ -78,7 +79,7 @@ const server = createServer(async (req, res) => {
       // full-list re-sort recovers it, same as the real server's index-200
       // cutoff missing an `any;-;` chat entirely.
       const list = [...chats.values()].slice(offset, offset + limit)
-      sendJson(res, 200, envelope(list))
+      setTimeout(() => sendJson(res, 200, envelope(list)), chatFetchDelayMs)
       return
     }
 
@@ -125,6 +126,12 @@ const server = createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'image/png' })
         res.end(body)
       }, resized ? 0 : 300)
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/__test/chat-delay') {
+      chatFetchDelayMs = Number((await readBody(req)).ms) || 0
+      sendJson(res, 200, envelope({ ms: chatFetchDelayMs }))
       return
     }
 

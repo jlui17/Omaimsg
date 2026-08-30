@@ -4314,6 +4314,9 @@ class Store {
     if (chat)
       chat.pinned = pinned;
   }
+  hasChats() {
+    return this.chats.size > 0;
+  }
   replaceChats(normalizedChats) {
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid);
@@ -7435,19 +7438,28 @@ async function handleCommand(payload, reply) {
     case "ping":
       reply({ t: "pong" });
       return;
-    case "chats":
+    case "chats": {
       if (!config.ok) {
         reply({ t: "error", for: "chats", message: lastError });
         return;
       }
+      const limit = payload.limit || 40;
+      const servedChats = store.hasChats() ? store.chatList().slice(0, limit) : null;
+      if (servedChats)
+        reply({ t: "chats", chats: servedChats, unread: store.totalUnread() });
       try {
-        const chats = await session.chats();
-        store.replaceChats(chats);
-        reply({ t: "chats", chats: store.chatList().slice(0, payload.limit || 40), unread: store.totalUnread() });
+        store.replaceChats(await session.chats());
+        const fresh = store.chatList().slice(0, limit);
+        if (!servedChats || JSON.stringify(servedChats) !== JSON.stringify(fresh))
+          reply({ t: "chats", chats: fresh, unread: store.totalUnread() });
       } catch (err) {
-        reply({ t: "error", for: "chats", message: err.message });
+        if (servedChats)
+          logger.warn("chats: revalidation failed, cached list stands", { err: err.message });
+        else
+          reply({ t: "error", for: "chats", message: err.message });
       }
       return;
+    }
     case "messages":
       if (!config.ok) {
         reply({ t: "error", for: "messages", message: lastError });

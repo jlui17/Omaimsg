@@ -59,6 +59,10 @@ export class Store {
     if (chat) chat.pinned = pinned
   }
 
+  hasChats() {
+    return this.chats.size > 0
+  }
+
   replaceChats(normalizedChats) {
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid)
