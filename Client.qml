@@ -313,9 +313,12 @@ Item {
     root.setChats(list)
   }
 
+  // The attempt is recorded before the bail-out, not after: with no plugin dir
+  // there is nothing to launch, and leaving it unset would hold daemonStarting
+  // true forever, so the strip would promise a start nothing had begun.
   function startDaemon() {
-    if (!pluginDir || pluginDir.length === 0) return
     root.daemonStartRetry = root.retryCount
+    if (!pluginDir || pluginDir.length === 0) return
     daemonStarter.running = true
   }
 
