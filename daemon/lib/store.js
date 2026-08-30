@@ -16,6 +16,7 @@ export class Store {
     this.chats = new Map()
     this.threads = new Map()
     this.pins = new PinStore()
+    this.sweptChats = false
   }
 
   // Least-recently-read eviction: reading a thread moves it to the end of the
@@ -59,11 +60,16 @@ export class Store {
     if (chat) chat.pinned = pinned
   }
 
-  hasChats() {
-    return this.chats.size > 0
+  // Whether a full account sweep has landed, which is not the same as holding
+  // a chat: one inbound message for an unknown chat puts a single entry in the
+  // map. Serving that as the list would have a client render one conversation
+  // and believe it had them all.
+  hasFullChatList() {
+    return this.sweptChats
   }
 
   replaceChats(normalizedChats) {
+    this.sweptChats = true
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid)
       this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) })

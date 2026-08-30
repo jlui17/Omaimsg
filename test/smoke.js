@@ -276,8 +276,33 @@ async function main() {
   const stateFrame = await waitForConnected(client)
   report('hello -> state connected', stateFrame.connection === 'connected', JSON.stringify(stateFrame))
 
-  const chatsFrame = await settledChats(client, { limit: 40 })
+  // A push before any `chats` request seeds exactly one chat in the store. The
+  // cache-first reply must not serve that as the list, or a client renders one
+  // conversation and believes it has them all. This is the only window in the
+  // run where the store has never been swept, so the check lives here.
+  await mockControl('push-message', { chatGuid: ATTACHMENT_TEST_CHAT, text: 'seed the store' })
+  await client.waitFor((f) => f.t === 'message' && f.chatGuid === ATTACHMENT_TEST_CHAT)
+
+  // Read the FIRST frame, not the settled one: the cached reply is what a panel
+  // renders immediately, and the revalidation behind it would hide a bad one.
+  await quiesceChats(client)
+  client.send({ t: 'chats', limit: 40 })
+  const firstChatsFrame = await client.waitFor((f) => f.t === 'chats')
+  report(
+    'chats -> a push before the first request is not served as the list',
+    firstChatsFrame.chats?.length === 7,
+    `first frame carried ${firstChatsFrame.chats?.length} chats`
+  )
+  let chatsFrame = firstChatsFrame
+  try {
+    chatsFrame = await client.waitFor((f) => f.t === 'chats', 1500)
+  } catch {
+    // One frame was the whole answer.
+  }
   report('chats -> 7 chats', chatsFrame.chats?.length === 7, `got ${chatsFrame.chats?.length}`)
+  // The seed left an unread behind. Clear it so the unread assertions further
+  // down measure their own pushes and nothing else.
+  client.send({ t: 'read', chatGuid: ATTACHMENT_TEST_CHAT })
 
   const oneToOneChat = chatsFrame.chats.find((c) => c.isGroup === false)
   const groupChat = chatsFrame.chats.find((c) => c.isGroup === true)
