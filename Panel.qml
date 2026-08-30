@@ -184,32 +184,43 @@ Panel {
     }
   }
 
-  // Reconcile by guid rather than reassigning the model. Assigning a fresh list
-  // makes ListView destroy and rebuild every delegate, which is what made the
-  // whole list blink on each refresh even when nothing had changed; patching in
-  // place also leaves a reordered row as the same item, so it can be animated.
-  function syncChatModel() {
-    var desired = root.visibleChats
+  // Reconcile rather than reassigning the model. Assigning a fresh list makes
+  // ListView destroy and rebuild every delegate, which is what made the whole
+  // list blink on each refresh even when nothing had changed; patching in place
+  // also leaves a reordered row as the same item, so it can be animated.
+  //
+  // Returns whether a row landed at index 0, which callers use to decide
+  // whether the view needs re-pinning to that end.
+  function syncListModel(model, rows, keyRole) {
     var wanted = {}
-    for (var i = 0; i < desired.length; i++) wanted[desired[i].guid] = true
-    for (var stale = chatModel.count - 1; stale >= 0; stale--) {
-      if (!wanted[chatModel.get(stale).guid]) chatModel.remove(stale)
+    for (var i = 0; i < rows.length; i++) wanted[rows[i][keyRole]] = true
+    for (var stale = model.count - 1; stale >= 0; stale--) {
+      if (!wanted[model.get(stale)[keyRole]]) model.remove(stale)
     }
-    for (var target = 0; target < desired.length; target++) {
-      var row = root.chatRow(desired[target])
+    var addedFirst = false
+    for (var target = 0; target < rows.length; target++) {
+      var row = rows[target]
       var found = -1
-      for (var scan = target; scan < chatModel.count; scan++) {
-        if (chatModel.get(scan).guid !== row.guid) continue
+      for (var scan = target; scan < model.count; scan++) {
+        if (model.get(scan)[keyRole] !== row[keyRole]) continue
         found = scan
         break
       }
       if (found === -1) {
-        chatModel.insert(target, row)
+        model.insert(target, row)
+        if (target === 0) addedFirst = true
         continue
       }
-      if (found !== target) chatModel.move(found, target, 1)
-      chatModel.set(target, row)
+      if (found !== target) model.move(found, target, 1)
+      model.set(target, row)
     }
+    return addedFirst
+  }
+
+  function syncChatModel() {
+    var rows = []
+    for (var i = 0; i < root.visibleChats.length; i++) rows.push(root.chatRow(root.visibleChats[i]))
+    root.syncListModel(chatModel, rows, "guid")
   }
 
   // Flat roles only, the same contract chatRow keeps: the delegate resolves
@@ -241,38 +252,11 @@ Panel {
     }
   }
 
-  // Reconcile by key rather than reassigning the model, for the reason
-  // syncChatModel gives: a fresh list makes ListView destroy every delegate and
-  // lose its position. A send writes the thread three times (optimistic row,
-  // ack patch, echo), so on a JS-array model that was three full resets, each
-  // one a visible jump until the re-pin caught up a frame later.
-  //
-  // Returns whether a row landed at index 0, which is the newest end.
+  // A send writes the thread three times (optimistic row, ack patch, echo), so
+  // on a JS-array model that was three full resets, each one a visible jump
+  // until the re-pin caught up a frame later.
   function syncThreadModel() {
-    var desired = root.threadRows
-    var wanted = {}
-    for (var i = 0; i < desired.length; i++) wanted[desired[i].key] = true
-    for (var stale = threadModel.count - 1; stale >= 0; stale--) {
-      if (!wanted[threadModel.get(stale).key]) threadModel.remove(stale)
-    }
-    var addedNewest = false
-    for (var target = 0; target < desired.length; target++) {
-      var row = desired[target]
-      var found = -1
-      for (var scan = target; scan < threadModel.count; scan++) {
-        if (threadModel.get(scan).key !== row.key) continue
-        found = scan
-        break
-      }
-      if (found === -1) {
-        threadModel.insert(target, row)
-        if (target === 0) addedNewest = true
-        continue
-      }
-      if (found !== target) threadModel.move(found, target, 1)
-      threadModel.set(target, row)
-    }
-    return addedNewest
+    return root.syncListModel(threadModel, root.threadRows, "key")
   }
 
   function moveCursor(delta) {
