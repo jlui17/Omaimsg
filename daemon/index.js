@@ -101,7 +101,10 @@ async function handleCommand(payload, reply) {
       // Slice AFTER Store's pinned-first/recency sort, never at the
       // BlueBubbles fetch: see bluebubbles.js's header note on why the
       // server's own top-N cut can't be trusted.
-      const limit = payload.limit || 40
+      // `limit: 0` means the whole list: a filtered panel spans the account,
+      // and any fixed number is a cut it cannot see past.
+      const limit = payload.limit === undefined ? 40 : payload.limit
+      const page = (chats) => (limit > 0 ? chats.slice(0, limit) : chats)
       // Cache-first, then revalidate, as the `messages` case does. This is the
       // costlier of the two to answer cold: the fetch behind it pages the
       // entire account, so a client holding a list should never wait on it.
@@ -109,11 +112,11 @@ async function handleCommand(payload, reply) {
       // usually already the right one. It has to be a swept list though, not
       // merely a non-empty map: a push can seed a single chat before any client
       // has asked for the list.
-      const servedChats = store.hasFullChatList() ? store.chatList().slice(0, limit) : null
+      const servedChats = store.hasFullChatList() ? page(store.chatList()) : null
       if (servedChats) reply({ t: 'chats', chats: servedChats, unread: store.totalUnread() })
       try {
         store.replaceChats(await session.chats())
-        const fresh = store.chatList().slice(0, limit)
+        const fresh = page(store.chatList())
         if (!servedChats || JSON.stringify(servedChats) !== JSON.stringify(fresh))
           reply({ t: 'chats', chats: fresh, unread: store.totalUnread() })
       } catch (err) {

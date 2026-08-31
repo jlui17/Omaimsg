@@ -9,7 +9,7 @@ POC scope: text messages plus image attachments. A message with attachments carr
 | Frame | Meaning |
 |---|---|
 | `{"t":"hello"}` | Request a full `state` frame (sent on every connect). |
-| `{"t":"chats","limit":40}` | Request the chat list. |
+| `{"t":"chats","limit":40}` | Request the chat list. `limit: 0` asks for the whole list (what a filtered panel needs, since a filter spans the account); an omitted `limit` means 40. |
 | `{"t":"messages","chatGuid":"...","limit":60}` | Request recent messages for one chat, oldest first. Served from the daemon's cache when warm; see the reply frame for what that means for the client. |
 | `{"t":"send","chatGuid":"...","text":"...","tempId":"..."}` | Send a text message. `tempId` is client-generated, echoed in the `ack`. |
 | `{"t":"read","chatGuid":"..."}` | Mark a chat read (clears its unread count in the daemon; not synced to Apple in the POC). |

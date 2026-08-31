@@ -7451,13 +7451,14 @@ async function handleCommand(payload, reply) {
         reply({ t: "error", for: "chats", message: lastError });
         return;
       }
-      const limit = payload.limit || 40;
-      const servedChats = store.hasFullChatList() ? store.chatList().slice(0, limit) : null;
+      const limit = payload.limit === undefined ? 40 : payload.limit;
+      const page = (chats) => limit > 0 ? chats.slice(0, limit) : chats;
+      const servedChats = store.hasFullChatList() ? page(store.chatList()) : null;
       if (servedChats)
         reply({ t: "chats", chats: servedChats, unread: store.totalUnread() });
       try {
         store.replaceChats(await session.chats());
-        const fresh = store.chatList().slice(0, limit);
+        const fresh = page(store.chatList());
         if (!servedChats || JSON.stringify(servedChats) !== JSON.stringify(fresh))
           reply({ t: "chats", chats: fresh, unread: store.totalUnread() });
       } catch (err) {

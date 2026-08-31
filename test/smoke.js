@@ -701,6 +701,14 @@ async function main() {
     `got ${allChatsFrame.chats.length}`
   )
 
+  const cappedFrame = await settledChats(client, { limit: 3 })
+  const uncappedFrame = await settledChats(client, { limit: 0 })
+  report(
+    'limit 0 -> the whole list, where a numeric limit caps it',
+    cappedFrame.chats.length === 3 && uncappedFrame.chats.length === 7,
+    `capped ${cappedFrame.chats.length}, uncapped ${uncappedFrame.chats.length}`
+  )
+
   client.send({ t: 'ping' })
   const pongFrame = await client.waitFor((f) => f.t === 'pong')
   report('ping -> pong', !!pongFrame)

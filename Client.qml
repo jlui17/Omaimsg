@@ -104,8 +104,10 @@ Item {
     root.refresh()
     root.requestChats()
   }
+  // `limit === 0` asks for the whole list and has to survive the default, so
+  // this tests for undefined rather than falling back on falsiness.
   function requestChats(limit) {
-    if (!request({ t: "chats", limit: limit || root.chatLimit })) return false
+    if (!request({ t: "chats", limit: limit === undefined ? root.chatLimit : limit })) return false
     root.chatsPending = true
     return true
   }

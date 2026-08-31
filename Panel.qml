@@ -366,11 +366,11 @@ Panel {
     root.openThread(root.chatAt(root.cursorIndex))
   }
 
-  // A filter should see more conversations than the list renders, so the deep
-  // page stands for as long as either one is up.
+  // A filter searches the account, not the rendered page, so it asks for the
+  // whole list; the page stands for as long as either filter is up.
   function syncChatPage() {
     if (!root.client) return
-    root.client.requestChats(root.searching || root.unreadOnly ? 200 : root.chatLimit)
+    root.client.requestChats(root.searching || root.unreadOnly ? 0 : root.chatLimit)
   }
 
   function beginSearch() {
