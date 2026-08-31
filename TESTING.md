@@ -13,7 +13,7 @@ mise run test:ui       # widget and panel, rendered headlessly (test/qsmcp/check
 
 ```sh
 sudo pacman -S sway cue jq wtype   # UI checks only
-bun install                        # workspace deps for daemon/ and test/
+mise run setup                     # workspace deps for daemon/ and test/
 ```
 
 `sway` never replaces your session compositor. The UI checks boot it headless
