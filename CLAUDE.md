@@ -5,9 +5,10 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 ## Architecture and contracts
 
 - The plugin is pure UI; the daemon owns all networking (BlueBubbles REST + Socket.IO) and state (unread counts, pins, contact resolution). They speak NDJSON over a Unix socket. The wire contract is `docs/daemon-protocol.md` — it is the source of truth; change the doc in the same round as either side.
+- The manifest `id` is the plugin's identity and everything derives from it, so a copy installed under a second id runs beside the one you use without touching it. `BarWidget.qml` reads the id and hands it down; `Client.qml` names the socket by appending `.sock` and passes the id to the daemon as `OMAIMSG_PLUGIN_ID`. Every rule for turning that id into a state path lives in `daemon/lib/paths.js` — QML holds none of it, so the two sides cannot drift. Every path is named by the whole id with no id excepted, never a shortened or scrubbed form: any such form collapses ids differing only in what it drops, and the two installs then share a pins file.
 - The daemon never trusts BlueBubbles' chat ranking: `/api/v1/chat/query`'s sort/paging silently drops merged `any;-;` chats (verified against a real server; see the header comment in `daemon/lib/bluebubbles.js`). It always paginates the full chat list and sorts locally (pinned first, then `lastMessage.ts` descending, nulls last).
 - Contact matching mirrors BlueBubbles' own suffix algorithm but with a ≥7-digit floor for fuzzy matches — anything shorter lets SMS shortcodes claim contacts. Emails match exactly only.
-- Sends default to BlueBubbles' `apple-script` method (no Private API/SIP setup on the Mac). `~/.config/omaimsg/config.json` holds `serverUrl`/`password` and is never committed.
+- Sends default to BlueBubbles' `apple-script` method (no Private API/SIP setup on the Mac). `~/.config/<plugin id>/config.json` (`~/.config/io.omaimsg/config.json` as installed) holds `serverUrl`/`password` and is never committed.
 - Thread paging is the daemon's: it sizes a page from `cache.messagesPerThread`, which is also the tail it caches, so the two cannot disagree. The panel asks for a thread and then for the page before it (`olderMessages`); the manifest has no message-count setting.
 
 ## Verification
@@ -17,7 +18,7 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 Working knowledge that bites:
 
 - A change under `daemon/` re-runs `bun run bundle` and commits `daemon/dist/omaimsg-daemon.cjs` in the same round. It's the daemon installed plugins actually run, so `test:bundle` fails without it.
-- UI checks address nodes by what they are (`moduleName === "io.omaimsg"`, the composer's `placeholderText`), never by child index — index paths move when Omarchy reorders the bar.
+- UI checks address nodes by what they are (`moduleName === "io.omaimsg"`, the composer's `placeholderText`), never by child index — index paths move when Omarchy reorders the bar. Root each finder at the widget that owns it: the staged bar holds two installs, so an unrooted predicate answers for whichever the walk reaches first.
 - Keystrokes go through `wtype`, bracketed with `-s 300`. Sway drops events delivered before the virtual keyboard's keymap settles, and a bare `wtype j` then exits 0 having done nothing at all.
 - The quickshell-mcp pin lives in `.mcp.json` alone; the mise task reads it from there, so it cannot drift.
 
@@ -25,7 +26,7 @@ Working knowledge that bites:
 
 - Install is a real copy: `rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
   --exclude .mcp.json --exclude .claude --exclude mise.toml --exclude /test/qsmcp/stage \
-  ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it).
+  ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it). Rsync to `plugins/io.omaimsg.b/` with the manifest `id` rewritten to install a variant beside it; give it its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js`, or a send lands in a real conversation.
 - Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate.
 - `omarchy-shell io.omaimsg toggle|open|close` drives the panel from scripts/keybindings (requires `OMARCHY_PATH=/usr/share/omarchy`).
 - Templates this code follows: Omarchy first-party plugins (`/usr/share/omarchy/shell/plugins/`, especially clipboard and agents) and `srineshr1/omarchy-whatsapp` for the daemon/socket architecture. `docs/research/` has the full background.

@@ -14,13 +14,11 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "socketPath": "",
       "autostartDaemon": true,
       "showUnreadCount": true,
       "chatLimit": 40
     },
     "schema": [
-      { "key": "socketPath", "type": "string", "label": "Daemon socket path (blank = default)" },
       { "key": "autostartDaemon", "type": "bool", "label": "Start the daemon automatically" },
       { "key": "showUnreadCount", "type": "bool", "label": "Show unread count next to the icon" },
       { "key": "chatLimit", "type": "int", "label": "Chats listed in the panel" }

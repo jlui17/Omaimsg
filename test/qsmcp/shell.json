@@ -11,7 +11,10 @@
     "layout": {
       "left": [],
       "center": [{ "id": "omarchy.clock", "format": "dddd HH:mm" }],
-      "right": [{ "id": "io.omaimsg", "autostartDaemon": false }]
+      "right": [
+        { "id": "io.omaimsg", "autostartDaemon": false },
+        { "id": "io.omaimsg.b", "autostartDaemon": false }
+      ]
     }
   },
   "plugins": []

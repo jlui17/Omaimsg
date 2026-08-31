@@ -14,7 +14,10 @@ Item {
   // Absolute path to the plugin directory, injected by BarWidget so the client
   // can start the daemon without guessing where it was installed.
   property string pluginDir: ""
-  property string socketPath: ""
+  // The plugin's manifest id, injected by BarWidget. Everything instance-shaped
+  // is derived from it by the daemon; the socket is the one path both sides
+  // must name, so it is the id with ".sock" on the end and nothing more.
+  property string pluginId: ""
   property bool autostartDaemon: true
   // How many chats a request asks for. Owned here because the link-up prefetch
   // needs it before any panel is involved: prefetching a smaller page than the
@@ -22,11 +25,10 @@ Item {
   // next request.
   property int chatLimit: 40
 
-  readonly property string defaultSocketPath: {
+  readonly property string socketPath: {
     var runtime = Quickshell.env("XDG_RUNTIME_DIR")
-    return (runtime && runtime.length > 0 ? runtime : "/tmp") + "/omaimsg.sock"
+    return (runtime && runtime.length > 0 ? runtime : "/tmp") + "/" + root.pluginId + ".sock"
   }
-  readonly property string effectiveSocketPath: socketPath && socketPath.length > 0 ? socketPath : defaultSocketPath
 
   // Live state mirrored from the daemon's `state` frames.
   property string connection: "unknown"
@@ -532,7 +534,7 @@ Item {
     id: socketComponent
 
     Socket {
-      path: root.effectiveSocketPath
+      path: root.socketPath
       connected: true
 
       parser: SplitParser {
@@ -593,7 +595,7 @@ Item {
 
   Process {
     id: daemonStarter
-    command: ["systemctl", "--user", "start", "omaimsg-daemon.service"]
+    command: ["systemctl", "--user", "start", "omaimsg-daemon@" + root.pluginId + ".service"]
     onExited: function (exitCode) {
       // No unit installed (or it failed): fall back to launching the daemon
       // shipped next to the plugin.
@@ -604,6 +606,7 @@ Item {
   Process {
     id: fallbackStarter
     command: ["setsid", "node", root.pluginDir + "/daemon/dist/omaimsg-daemon.cjs"]
+    environment: ({ OMAIMSG_PLUGIN_ID: root.pluginId })
   }
 
   // Always arm the loop: it stops itself as soon as the link is confirmed up.

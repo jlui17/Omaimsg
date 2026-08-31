@@ -5,12 +5,13 @@ import qs.Ui
 
 // The iMessage surface: chat list and thread view with an inline composer.
 // Loaded by BarWidget.qml, which injects `bar`, `anchorItem`, `hostWidget`,
-// `settings`, and the shared `client`.
+// `pluginId`, `settings`, and the shared `client`.
 Panel {
   id: root
-  moduleName: "io.omaimsg"
+  moduleName: root.pluginId
   manageIpc: false
 
+  property string pluginId: ""
   property var anchorItem: null
   property var hostWidget: null
   property var client: null

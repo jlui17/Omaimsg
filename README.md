@@ -7,7 +7,7 @@ Prototype code answering one question: is a keyboard-driven iMessage popup in th
 ## Layout
 
 - `manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml` — the Omarchy shell plugin, at the repo root (required by `omarchy plugin add`, which clones the repo straight into the plugins dir).
-- `daemon/` — Node daemon. Speaks REST + Socket.IO to BlueBubbles, serves NDJSON over a Unix socket (`$XDG_RUNTIME_DIR/omaimsg.sock`) to the plugin. One daemon, many plugin clients (one per monitor).
+- `daemon/` — Node daemon. Speaks REST + Socket.IO to BlueBubbles, serves NDJSON over a Unix socket (`$XDG_RUNTIME_DIR/io.omaimsg.sock`) to the plugin. One daemon, many plugin clients (one per monitor).
 - `test/` — the test harness: a fake BlueBubbles server with canned chats, `smoke.js` for the daemon over the real Unix socket, and `qsmcp/` for the plugin rendered headlessly. See `TESTING.md`.
 
 ## Install
@@ -36,9 +36,23 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 
 `node test/smoke.js` runs the whole daemon protocol end to end without the shell.
 
+## Run a second copy beside the one you use
+
+The manifest `id` is the plugin's identity, and everything else follows from it: the bar entry, the `omarchy-shell` IPC target, the daemon's socket, and the daemon's config, pins, and attachment cache. Install a copy under a different id and it cannot touch the one you use.
+
+```sh
+rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
+  --exclude .mcp.json --exclude .claude --exclude mise.toml --exclude /test/qsmcp/stage \
+  ./ ~/.config/omarchy/plugins/io.omaimsg.b/
+jq '.id = "io.omaimsg.b"' manifest.json >~/.config/omarchy/plugins/io.omaimsg.b/manifest.json
+omarchy plugin enable io.omaimsg.b
+```
+
+Every state path is named after the id with no exception, so give the copy its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js` rather than the real Mac, or a send from it lands in a real conversation. `omarchy-shell io.omaimsg.b toggle` drives it.
+
 ## Run against a real Mac
 
-`~/.config/omaimsg/config.json`:
+`~/.config/io.omaimsg/config.json` (under `$XDG_CONFIG_HOME` if you set that variable):
 
 ```json
 { "serverUrl": "http://<mac-ip>:1234", "password": "<bluebubbles server password>" }
@@ -46,7 +60,7 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 
 Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the daemon holds in memory, and `messagesPerThread` is also the page size it serves a thread in — the panel pages further back by scrolling to the top (`docs/daemon-protocol.md`).
 
-Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
+Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon@io.omaimsg.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). A template unit must pass its instance through as `Environment=OMAIMSG_PLUGIN_ID=%i`, or the daemon binds the canonical paths while the widget waits on the variant's socket: `systemctl start` succeeded, so the widget never falls back to spawning its own. Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
 
 The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `bun run bundle` and commit the result in the same round.
 

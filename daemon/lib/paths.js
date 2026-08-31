@@ -1,29 +1,34 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
-// $XDG_RUNTIME_DIR/omaimsg.sock, falling back to /tmp when the session has no
-// runtime dir (e.g. a bare smoke-test environment). OMAIMSG_SOCKET overrides
-// both, so the smoke script can run daemons side by side without colliding.
-export const socketPath = process.env.OMAIMSG_SOCKET
-  || join(process.env.XDG_RUNTIME_DIR || '/tmp', 'omaimsg.sock')
+const CANONICAL_ID = 'io.omaimsg'
 
-export const configPath = process.env.OMAIMSG_CONFIG
-  || join(homedir(), '.config', 'omaimsg', 'config.json')
+// The plugin passes its manifest id through verbatim and every path is named
+// from it directly, with no exception for any id, so two installs cannot land
+// on each other's state however their ids are spelled. Omarchy rejects an id
+// holding "/" or ".." (PluginRegistry.qml validateManifest), so nothing here
+// has to scrub one.
+export function instancePaths(pluginId, env = process.env) {
+  const id = String(pluginId || CANONICAL_ID)
+  return {
+    socketPath: join(env.XDG_RUNTIME_DIR || '/tmp', `${id}.sock`),
+    configPath: env.OMAIMSG_CONFIG
+      || join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), id, 'config.json'),
+    pinsPath: join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), id, 'pins.json'),
+    attachmentsDir: join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), id, 'attachments')
+  }
+}
 
-export const pinsPath = join(
-  process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'),
-  'omaimsg',
-  'pins.json'
-)
+export const pluginId = String(process.env.OMAIMSG_PLUGIN_ID || CANONICAL_ID)
 
-const attachmentsDir = join(
-  process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
-  'omaimsg',
-  'attachments'
-)
+const resolved = instancePaths(pluginId)
+
+export const socketPath = resolved.socketPath
+export const configPath = resolved.configPath
+export const pinsPath = resolved.pinsPath
 
 // base64url rather than the raw guid: BlueBubbles attachment guids can carry
 // characters that are unsafe as filenames, and the encoding stays collision-free.
 export function attachmentPath(guid, suffix = '') {
-  return join(attachmentsDir, Buffer.from(guid, 'utf8').toString('base64url') + suffix)
+  return join(resolved.attachmentsDir, Buffer.from(guid, 'utf8').toString('base64url') + suffix)
 }

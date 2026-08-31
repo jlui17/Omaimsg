@@ -1,9 +1,10 @@
 # Testing
 
-Three suites and two manual checks. `mise run test` runs all three suites in order.
+Four suites and two manual checks. `mise run test` runs all four suites in order, cheapest first.
 
 ```sh
 mise run test          # everything
+mise run test:paths    # plugin id -> state path derivation (test/paths.test.js)
 mise run test:daemon   # daemon protocol over the real Unix socket (test/smoke.js)
 mise run test:bundle   # the same, against the committed daemon bundle
 mise run test:ui       # widget and panel, rendered headlessly (test/qsmcp/check.py)
@@ -75,6 +76,10 @@ Nodes are addressed by what they are, not by index: the bar widget is the node w
 `io.omaimsg`, the composer is the field whose placeholder starts with `Message`. Index paths would
 move the moment Omarchy reorders the bar.
 
+Each finder is also rooted at the widget that owns it, because the staged bar holds two installs of
+this plugin. "The first node with a composer" would otherwise answer for whichever of the two the
+walk reached first, and which one that is has nothing to do with the change under test.
+
 `test/qsmcp/daemon-config.json` runs the daemon with a five-message page, because the fake server
 gives each chat 10 to 30 messages and the default page of 60 would swallow every thread whole,
 leaving nothing for the paging checks to page. It carries no `serverUrl`: the fake server adds one for the
@@ -99,7 +104,11 @@ mise run stage
 ```
 
 That writes `test/qsmcp/stage/` (gitignored): a private copy of Omarchy's shell tree, this repo
-installed into `plugins/io.omaimsg`, and a fake `HOME` holding a one-widget bar layout. Staging is
+installed twice -- into `plugins/io.omaimsg` and again into `plugins/io.omaimsg.b` with only the
+manifest `id` rewritten -- and a fake `HOME` whose bar layout carries both. The second install is
+what lets the identity checks fail: both widgets run the same QML off the same disk, so if the id
+were hardcoded rather than read from the manifest they would claim the same name, the same IPC
+target, and the same daemon socket. Neither install autostarts a daemon, so this stays a UI check. Staging is
 what makes the harness see the real components. `BarWidget.qml` and `Panel.qml` root on `BarWidget`
 and `Panel` from `qs.Ui`, which lives in `/usr/share/omarchy/shell`, so this repo has no entry point
 that runs on its own. `test/qsmcp/profile.json` then points the harness at the staged shell and

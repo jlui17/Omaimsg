@@ -1,8 +1,8 @@
 # Daemon ↔ plugin protocol (POC)
 
-Newline-delimited JSON over a Unix domain socket at `$XDG_RUNTIME_DIR/omaimsg.sock` (fallback `/tmp/omaimsg.sock`). The daemon accepts multiple clients and fans every push frame out to all of them (one plugin client per monitor). Frame shape follows the convention Quickshell's `Socket` + `SplitParser` consume directly: one JSON object per line, `t` is the frame type.
+Newline-delimited JSON over a Unix domain socket at `$XDG_RUNTIME_DIR/<plugin id>.sock` (fallback `/tmp`), so the canonical install is `io.omaimsg.sock`. The plugin names it by appending `.sock` to its manifest id; the daemon derives the same name from `OMAIMSG_PLUGIN_ID`. The daemon accepts multiple clients and fans every push frame out to all of them (one plugin client per monitor). Frame shape follows the convention Quickshell's `Socket` + `SplitParser` consume directly: one JSON object per line, `t` is the frame type.
 
-POC scope: text messages plus image attachments. A message with attachments carries their metadata; the daemon downloads image files on request (thumbnail-sized, cached by guid under `$XDG_CACHE_HOME/omaimsg/attachments/`) and hands back a local path. A message whose only content is attachments still gets `[attachment]` substituted as its text, so previews and non-image attachments render something. No tapbacks, no typing indicators, no read-receipt sync back to Apple.
+POC scope: text messages plus image attachments. A message with attachments carries their metadata; the daemon downloads image files on request (thumbnail-sized, cached by guid under `$XDG_CACHE_HOME/<plugin id>/attachments/`) and hands back a local path. A message whose only content is attachments still gets `[attachment]` substituted as its text, so previews and non-image attachments render something. No tapbacks, no typing indicators, no read-receipt sync back to Apple.
 
 ## Client → daemon
 
@@ -14,7 +14,7 @@ POC scope: text messages plus image attachments. A message with attachments carr
 | `{"t":"olderMessages","chatGuid":"...","beforeTs":1730000000000}` | Request the page ending at `beforeTs` (unix ms) in one chat: what a panel asks for when the reader scrolls to the top of what it holds, passing the timestamp of the oldest message it has. Same page size as `messages`. Never served from cache — the cache is the thread's newest page, so nothing behind it is ever a hit. |
 | `{"t":"send","chatGuid":"...","text":"...","tempId":"..."}` | Send a text message. `tempId` is client-generated, echoed in the `ack`. |
 | `{"t":"read","chatGuid":"..."}` | Mark a chat read (clears its unread count in the daemon; not synced to Apple in the POC). |
-| `{"t":"pin","chatGuid":"...","pinned":true}` | Pin or unpin a chat. Daemon-local (Apple keeps iPhone pins outside chat.db, so BlueBubbles can't see them); persisted to `$XDG_STATE_HOME/omaimsg/pins.json` so pins survive restarts. The daemon replies by broadcasting a fresh `chats` frame to all clients. |
+| `{"t":"pin","chatGuid":"...","pinned":true}` | Pin or unpin a chat. Daemon-local (Apple keeps iPhone pins outside chat.db, so BlueBubbles can't see them); persisted to `$XDG_STATE_HOME/<plugin id>/pins.json` so pins survive restarts. The daemon replies by broadcasting a fresh `chats` frame to all clients. |
 | `{"t":"attachment","guid":"..."}` | Request a local file for one attachment. The daemon serves it from the guid-keyed cache or downloads it from BlueBubbles (images come back thumbnail-width, re-encoded as PNG by the server). |
 | `{"t":"preview","guid":"..."}` | Request a viewer-ready file for one attachment. Replies immediately with a `.preview` file holding the best bytes on hand (the cached full-size file, else a copy of the thumbnail), then downloads the full-size file in the background (cached as `.full`) and overwrites the `.preview` in place — a viewer that watches the file (imv does) upgrades itself. A failed background upgrade is logged, never surfaced; the viewer keeps the thumbnail. |
 | `{"t":"ping"}` | Liveness probe. |
@@ -53,7 +53,7 @@ Unread counts follow the Mac, which owns read state. A starting daemon seeds the
 
 Seeding is approximate, because BlueBubbles exposes no unread field: a chat counts as unread when its newest inbound messages carry no `dateRead` *and* the chat has recorded a read before, which is what proves the Mac tracks read state there. A chat that has never recorded one is unknowable and seeds as zero.
 
-Thread pages are cached the same way — in memory, dying with the daemon: the newest page of each of the most recently read chats, kept warm by inbound pushes. Both sizes come from the daemon's config (`~/.config/omaimsg/config.json`), which is also the only place a page size is set:
+Thread pages are cached the same way — in memory, dying with the daemon: the newest page of each of the most recently read chats, kept warm by inbound pushes. Both sizes come from the daemon's config (`~/.config/<plugin id>/config.json`), which is also the only place a page size is set:
 
 ```
 { "serverUrl": "...", "password": "...", "cache": { "threads": 30, "messagesPerThread": 60 } }

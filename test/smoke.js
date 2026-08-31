@@ -1,11 +1,12 @@
 // End-to-end smoke test: mock BlueBubbles server -> daemon -> raw NDJSON
 // client over the Unix socket. Exercises every frame in docs/daemon-protocol.md.
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { instancePaths } from '../daemon/lib/paths.js'
 import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, ORPHANED_TEST, SEED_UNREAD_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT, UNREACHABLE_TEST } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -18,10 +19,17 @@ const PASSWORD = 'testpass'
 // behind its first one to walk back through.
 const CACHE_PAGE_SIZE = 5
 const configPath = path.join(os.tmpdir(), `omaimsg-smoke-config-${process.pid}.json`)
-const socketPath = path.join(os.tmpdir(), `omaimsg-smoke-${process.pid}.sock`)
+// Per-PID everywhere so two worktrees can run the suite at once. The daemon is
+// sandboxed by pointing its XDG dirs here rather than by handing it paths, so
+// the run exercises the real derivation.
+const runtimeDir = path.join(os.tmpdir(), `omaimsg-smoke-run-${process.pid}`)
 const stateHome = path.join(os.tmpdir(), `omaimsg-smoke-state-${process.pid}`)
-const pinsFilePath = path.join(stateHome, 'omaimsg', 'pins.json')
 const cacheHome = path.join(os.tmpdir(), `omaimsg-smoke-cache-${process.pid}`)
+const PLUGIN_ID = 'io.omaimsg'
+const sandbox = { XDG_RUNTIME_DIR: runtimeDir, XDG_STATE_HOME: stateHome, XDG_CACHE_HOME: cacheHome }
+// Where the daemon under test will put things, asked of the same function it
+// asks, so this file holds no second copy of the naming rules.
+const { socketPath, pinsPath: pinsFilePath } = instancePaths(PLUGIN_ID, sandbox)
 
 const failures = []
 function report(step, cond, detail) {
@@ -233,14 +241,12 @@ function cleanup() {
       console.error(`smoke: failed to signal ${name}`, err.message)
     }
   }
-  for (const file of [configPath, socketPath]) {
-    try {
-      rmSync(file, { force: true })
-    } catch {
-      // Already gone.
-    }
+  try {
+    rmSync(configPath, { force: true })
+  } catch {
+    // Already gone.
   }
-  for (const dir of [stateHome, cacheHome]) {
+  for (const dir of [stateHome, cacheHome, runtimeDir]) {
     try {
       rmSync(dir, { force: true, recursive: true })
     } catch {
@@ -267,6 +273,8 @@ async function main() {
     cache: { threads: 30, messagesPerThread: CACHE_PAGE_SIZE }
   }))
 
+  mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
+
   trackSpawn(
     spawn('node', [daemonEntry], {
       cwd: repoRoot,
@@ -276,9 +284,8 @@ async function main() {
       env: {
         ...process.env,
         OMAIMSG_CONFIG: configPath,
-        OMAIMSG_SOCKET: socketPath,
-        XDG_STATE_HOME: stateHome,
-        XDG_CACHE_HOME: cacheHome,
+        OMAIMSG_PLUGIN_ID: PLUGIN_ID,
+        ...sandbox,
         OMAIMSG_CHAT_PAGE_SIZE: '3'
       },
       stdio: ['ignore', 'ignore', 'inherit']

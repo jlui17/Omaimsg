@@ -1,6 +1,9 @@
+import { pluginId } from './paths.js'
+
 // stderr only, prefixed per the POC spec so it's easy to grep out of a
-// systemd journal shared with the plugin side.
-const PREFIX = 'omaimsg-daemon:'
+// systemd journal shared with the plugin side. Every daemon names its install,
+// so a journal carrying more than one stays readable.
+const PREFIX = `omaimsg-daemon[${pluginId}]:`
 
 function line(level, msg, extra) {
   const suffix = extra !== undefined ? ` ${JSON.stringify(extra)}` : ''

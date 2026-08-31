@@ -30,11 +30,17 @@ def find(pred: str, root: str = "win(0)") -> str:
     )
 
 
-BAR = find("o.moduleName==='io.omaimsg' && String(o).indexOf('BarWidget')>=0")
-PANEL = find("o.moduleName==='io.omaimsg' && String(o).indexOf('Panel')>=0")
-CLIENT = find("o.effectiveSocketPath!==undefined")
+# The staged bar holds two installs of this plugin under different ids, so every
+# finder is scoped to the one it belongs to. Unrooted, "the first node with a
+# composer" would answer for whichever widget the walk happened to reach first.
+CANONICAL_ID, VARIANT_ID = (e["id"] for e in json.loads((HERE / "shell.json").read_text())["bar"]["layout"]["right"])
+BAR = find(f"o.moduleName==={CANONICAL_ID!r} && String(o).indexOf('BarWidget')>=0")
+PANEL = find(f"o.moduleName==={CANONICAL_ID!r} && String(o).indexOf('Panel')>=0")
+VARIANT_BAR = find(f"o.moduleName==={VARIANT_ID!r} && String(o).indexOf('BarWidget')>=0")
+CLIENT = find("o.socketPath!==undefined", root=BAR)
+VARIANT_CLIENT = find("o.socketPath!==undefined", root=VARIANT_BAR)
 BUTTON = find("o.tooltipText!==undefined", root=BAR)
-COMPOSER = find("String(o.placeholderText||'').indexOf('Message')===0")
+COMPOSER = find("String(o.placeholderText||'').indexOf('Message')===0", root=PANEL)
 
 
 def keys(*args: str) -> None:
@@ -75,6 +81,24 @@ def wait_for(d: Driver, expr: str, ok, timeout: float = 20.0):
 
 
 def run(d: Driver) -> None:
+    d.section("identity")
+    # Both widgets run the same QML off the same disk; only their manifests
+    # differ. A hardcoded id would make these two answers identical.
+    d.eq("the widget takes its id from its manifest", d.eval(q(BAR, "return x.pluginId;")), CANONICAL_ID)
+    d.eq("a second install under another id is its own widget", d.eval(q(VARIANT_BAR, "return x.pluginId;")), VARIANT_ID)
+    # The host overwrites moduleName from the bar entry after load, so nothing
+    # but this pins it against the id the widget read for itself.
+    for name, node in (("the install", BAR), ("the second install", VARIANT_BAR)):
+        d.check(f"{name} answers to one id", d.eval(q(node, "return x.pluginId===x.moduleName;")) is True)
+    sockets = [
+        d.eval(q(CLIENT, "return x.socketPath;")),
+        d.eval(q(VARIANT_CLIENT, "return x.socketPath;")),
+    ]
+    d.check(
+        "each install names its own daemon socket",
+        sockets[0].endswith(f"/{CANONICAL_ID}.sock") and sockets[1].endswith(f"/{VARIANT_ID}.sock"),
+    )
+
     d.section("wiring")
     conn = wait_for(d, q(CLIENT, "return x.connection;"), lambda v: v == "connected")
     d.eq("client reaches the daemon", conn, "connected")

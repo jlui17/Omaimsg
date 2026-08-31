@@ -9,12 +9,17 @@ description = "Provision a fresh checkout or worktree with the dependencies the 
 run = "bun install"
 
 [tasks.test]
-description = "Every check: daemon protocol, the committed bundle, then the UI"
+description = "Every check: path derivation, daemon protocol, the committed bundle, then the UI"
 run = [
+  "mise run test:paths",
   "mise run test:daemon",
   "mise run test:bundle",
   "mise run test:ui",
 ]
+
+[tasks."test:paths"]
+description = "The plugin id -> state path derivation, in isolation"
+run = "node --test test/paths.test.js"
 
 [tasks."test:daemon"]
 description = "Daemon protocol end to end over the real Unix socket"

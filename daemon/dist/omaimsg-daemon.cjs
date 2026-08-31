@@ -4036,16 +4036,27 @@ var import_node_fs = require("node:fs");
 // daemon/lib/paths.js
 var import_node_path = require("node:path");
 var import_node_os = require("node:os");
-var socketPath = process.env.OMAIMSG_SOCKET || import_node_path.join(process.env.XDG_RUNTIME_DIR || "/tmp", "omaimsg.sock");
-var configPath = process.env.OMAIMSG_CONFIG || import_node_path.join(import_node_os.homedir(), ".config", "omaimsg", "config.json");
-var pinsPath = import_node_path.join(process.env.XDG_STATE_HOME || import_node_path.join(import_node_os.homedir(), ".local", "state"), "omaimsg", "pins.json");
-var attachmentsDir = import_node_path.join(process.env.XDG_CACHE_HOME || import_node_path.join(import_node_os.homedir(), ".cache"), "omaimsg", "attachments");
+var CANONICAL_ID = "io.omaimsg";
+function instancePaths(pluginId, env = process.env) {
+  const id = String(pluginId || CANONICAL_ID);
+  return {
+    socketPath: import_node_path.join(env.XDG_RUNTIME_DIR || "/tmp", `${id}.sock`),
+    configPath: env.OMAIMSG_CONFIG || import_node_path.join(env.XDG_CONFIG_HOME || import_node_path.join(import_node_os.homedir(), ".config"), id, "config.json"),
+    pinsPath: import_node_path.join(env.XDG_STATE_HOME || import_node_path.join(import_node_os.homedir(), ".local", "state"), id, "pins.json"),
+    attachmentsDir: import_node_path.join(env.XDG_CACHE_HOME || import_node_path.join(import_node_os.homedir(), ".cache"), id, "attachments")
+  };
+}
+var pluginId = String(process.env.OMAIMSG_PLUGIN_ID || CANONICAL_ID);
+var resolved = instancePaths(pluginId);
+var socketPath = resolved.socketPath;
+var configPath = resolved.configPath;
+var pinsPath = resolved.pinsPath;
 function attachmentPath(guid, suffix = "") {
-  return import_node_path.join(attachmentsDir, Buffer.from(guid, "utf8").toString("base64url") + suffix);
+  return import_node_path.join(resolved.attachmentsDir, Buffer.from(guid, "utf8").toString("base64url") + suffix);
 }
 
 // daemon/lib/logger.js
-var PREFIX = "omaimsg-daemon:";
+var PREFIX = `omaimsg-daemon[${pluginId}]:`;
 function line(level, msg, extra) {
   const suffix = extra !== undefined ? ` ${JSON.stringify(extra)}` : "";
   process.stderr.write(`${PREFIX} [${level}] ${msg}${suffix}
@@ -7411,8 +7422,8 @@ function chatName(bbChat, contactIndex) {
     return bbChat.displayName;
   const participants = bbChat.participants || [];
   const names = participants.map((p) => {
-    const resolved = contactIndex.resolve(p.address);
-    return resolved ? resolved.split(" ")[0] : p.address;
+    const resolved2 = contactIndex.resolve(p.address);
+    return resolved2 ? resolved2.split(" ")[0] : p.address;
   });
   if (names.length === 0)
     return "";

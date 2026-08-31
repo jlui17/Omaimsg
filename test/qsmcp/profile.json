@@ -31,7 +31,7 @@
         "${PROFILE_DIR}/../../daemon/index.js"
       ],
       "ready": {
-        "socket": "${XDG_RUNTIME_DIR}/omaimsg.sock"
+        "socket": "${XDG_RUNTIME_DIR}/io.omaimsg.sock"
       },
       "env_out": {
         "OMAIMSG_CONFIG": "${WORK}/daemon-config.json"
