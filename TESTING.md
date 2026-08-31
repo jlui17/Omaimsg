@@ -22,8 +22,8 @@ profile, `jq` reads the harness pin, and `wtype` delivers keystrokes.
 
 `mise run setup` installs the dependencies a fresh checkout or worktree needs. A worktree starts
 without them whatever created it (a t3code thread, `EnterWorktree`, `wtnew`), so the SessionStart
-hook in `.claude/settings.json` says so when it sees a worktree whose `node_modules` is missing or
-older than `bun.lock`. It only reminds; provisioning stays a command someone runs.
+hook in `.claude/settings.json` says so when it sees a worktree with no `node_modules`. It only
+reminds; provisioning stays a command someone runs.
 
 Also assumed present: `node`, `rsync`, `mise`, `uv` (fetches the harness; no Python install of your
 own), and `bun` as a dev-time build tool, never a runtime. Omarchy supplies `qs`, `qmllint`, and

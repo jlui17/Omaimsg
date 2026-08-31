@@ -10,9 +10,7 @@ gitdir="$(git rev-parse --absolute-git-dir)"
 common="$(cd "$root" && realpath "$(git rev-parse --git-common-dir)")"
 [ "$gitdir" != "$common" ] || exit 0
 
-if [ -d "$root/node_modules" ] && [ ! "$root/bun.lock" -nt "$root/node_modules" ]; then
-  exit 0
-fi
+[ ! -d "$root/node_modules" ] || exit 0
 
 # A worktree whose own mise.toml predates the task would resolve `mise run
 # setup` against the main checkout's config and install there instead.
