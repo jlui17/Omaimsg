@@ -48,4 +48,4 @@ The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run b
 
 ## POC scope
 
-Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple, message cache persistence (unread counts reset with the daemon).
+Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple (reading a chat here does not mark it read on the Mac; that needs the Private API), message cache persistence.

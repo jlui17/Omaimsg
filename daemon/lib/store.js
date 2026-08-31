@@ -8,15 +8,17 @@ import { PinStore } from './pins.js'
 const MAX_CACHED_MESSAGES = 60
 const MAX_CACHED_THREADS = 30
 
-// Daemon-owned chat cache and unread counts. Unread is in-memory only, per
-// the protocol doc: +1 per inbound message to a chat not marked read since,
-// cleared by `read`. It resets on daemon restart; pins do not.
+// Daemon-owned chat cache and unread counts. Unread is not persisted: the Mac
+// is the source of truth, so a fresh daemon seeds from it (see
+// bluebubbles.js's unreadCounts) and then tracks live -- +1 per inbound
+// message, cleared by `read` or by the server reporting the chat read.
 export class Store {
   constructor() {
     this.chats = new Map()
     this.threads = new Map()
     this.pins = new PinStore()
     this.sweptChats = false
+    this.unreadSeed = null
   }
 
   // Least-recently-read eviction: reading a thread moves it to the end of the
@@ -83,6 +85,7 @@ export class Store {
         pinned: this.pins.pinned.has(chat.guid)
       })
     }
+    if (this.unreadSeed) this._applyUnreadSeed()
     return this.chatList()
   }
 
@@ -120,6 +123,23 @@ export class Store {
     if (!message.fromMe) chat.unread = (chat.unread || 0) + 1
     this.chats.set(pushedChat.guid, chat)
     return chat
+  }
+
+  // The scan and the first chat list race, so the seed is held until there are
+  // chats to attach it to and applied exactly once. It never overwrites a count
+  // this daemon has observed itself: a push that landed while the scan was in
+  // flight is the newer fact.
+  seedUnread(counts) {
+    this.unreadSeed = counts
+    if (this.chats.size) this._applyUnreadSeed()
+  }
+
+  _applyUnreadSeed() {
+    for (const [guid, unread] of Object.entries(this.unreadSeed)) {
+      const chat = this.chats.get(guid)
+      if (chat && !chat.unread) chat.unread = unread
+    }
+    this.unreadSeed = null
   }
 
   markRead(chatGuid) {

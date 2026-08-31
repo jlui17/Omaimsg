@@ -4279,6 +4279,7 @@ class Store {
     this.threads = new Map;
     this.pins = new PinStore;
     this.sweptChats = false;
+    this.unreadSeed = null;
   }
   cachedThread(chatGuid) {
     const thread = this.threads.get(chatGuid);
@@ -4329,6 +4330,8 @@ class Store {
         pinned: this.pins.pinned.has(chat.guid)
       });
     }
+    if (this.unreadSeed)
+      this._applyUnreadSeed();
     return this.chatList();
   }
   chatList() {
@@ -4362,6 +4365,19 @@ class Store {
       chat.unread = (chat.unread || 0) + 1;
     this.chats.set(pushedChat.guid, chat);
     return chat;
+  }
+  seedUnread(counts) {
+    this.unreadSeed = counts;
+    if (this.chats.size)
+      this._applyUnreadSeed();
+  }
+  _applyUnreadSeed() {
+    for (const [guid, unread] of Object.entries(this.unreadSeed)) {
+      const chat = this.chats.get(guid);
+      if (chat && !chat.unread)
+        chat.unread = unread;
+    }
+    this.unreadSeed = null;
   }
   markRead(chatGuid) {
     const chat = this.chats.get(chatGuid);
@@ -7156,6 +7172,7 @@ var CHAT_PAGE_SIZE = Number(process.env.OMAIMSG_CHAT_PAGE_SIZE) || 200;
 var CHAT_FETCH_CAP = 2000;
 var ATTACHMENT_IMAGE_WIDTH = 1024;
 var SEEN_MESSAGE_GUIDS = 500;
+var UNREAD_SCAN_LIMIT = 100;
 
 class BlueBubblesSession {
   constructor(config) {
@@ -7165,6 +7182,7 @@ class BlueBubblesSession {
     this.socket = null;
     this.onConnection = () => {};
     this.onMessage = () => {};
+    this.onChatRead = () => {};
     this.seenMessageGuids = new Set;
   }
   start() {
@@ -7189,6 +7207,14 @@ class BlueBubblesSession {
     this.socket.on("connect_error", (err) => {
       logger.warn("bluebubbles: connect_error", { err: err.message });
       this.onConnection("connecting", err.message);
+    });
+    this.socket.on("chat-read-status-changed", (payload) => {
+      const guid = payload?.guid || embeddedChat(payload)?.guid;
+      if (!guid) {
+        logger.warn("bluebubbles: chat-read-status-changed with no chat guid, dropping");
+        return;
+      }
+      this.onChatRead(guid);
     });
     this.socket.on("new-message", (payload) => {
       const bbChat = embeddedChat(payload);
@@ -7222,6 +7248,9 @@ class BlueBubblesSession {
   }
   async chats() {
     return this.client.queryAllChats(this.contacts);
+  }
+  async unreadCounts() {
+    return this.client.unreadCounts();
   }
   async messages(chatGuid, limit) {
     return this.client.getChatMessages(chatGuid, limit, this.contacts);
@@ -7270,6 +7299,10 @@ class BlueBubblesClient {
     return envelope.data;
   }
   async queryAllChats(contactIndex = EMPTY_CONTACT_INDEX) {
+    const all = await this._queryAllChatsRaw();
+    return all.map((chat) => normalizeChat(chat, contactIndex));
+  }
+  async _queryAllChatsRaw() {
     const all = [];
     let offset = 0;
     while (true) {
@@ -7282,7 +7315,29 @@ class BlueBubblesClient {
         break;
       offset += CHAT_PAGE_SIZE;
     }
-    return all.slice(0, CHAT_FETCH_CAP).map((chat) => normalizeChat(chat, contactIndex));
+    return all.slice(0, CHAT_FETCH_CAP);
+  }
+  async unreadCounts() {
+    const counts = {};
+    for (const chat of await this._queryAllChatsRaw()) {
+      const last = chat.lastMessage;
+      if (!last || last.isFromMe || last.dateRead)
+        continue;
+      const messages = await this._request(`/api/v1/chat/${encodeURIComponent(chat.guid)}/message`, {
+        query: { limit: UNREAD_SCAN_LIMIT, sort: "DESC" }
+      });
+      if (!messages.some((m) => !m.isFromMe && m.dateRead))
+        continue;
+      let unread = 0;
+      for (const message of messages) {
+        if (message.isFromMe || message.dateRead)
+          break;
+        unread += 1;
+      }
+      if (unread > 0)
+        counts[chat.guid] = unread;
+    }
+    return counts;
   }
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
@@ -7430,12 +7485,32 @@ if (config.ok) {
     lastError = error;
     pushState();
   };
+  session.onChatRead = (chatGuid) => {
+    const chat = store.chatList().find((c) => c.guid === chatGuid);
+    if (!chat || !chat.unread)
+      return;
+    store.markRead(chatGuid);
+    bus.broadcast({ t: "chats", chats: store.chatList(), unread: store.totalUnread() });
+  };
   session.onMessage = ({ chatGuid, chat, message }) => {
     const cached = store.upsertFromMessage(chat, message);
     store.appendToThread(chatGuid, message);
     bus.broadcast({ t: "message", chatGuid, message, chat: cached, unread: store.totalUnread() });
   };
   session.start();
+  seedUnread();
+}
+async function seedUnread() {
+  try {
+    store.seedUnread(await session.unreadCounts());
+    logger.info("unread: seeded from server", { unread: store.totalUnread() });
+    if (store.hasFullChatList())
+      bus.broadcast({ t: "chats", chats: store.chatList(), unread: store.totalUnread() });
+    else
+      pushState();
+  } catch (err) {
+    logger.warn("unread: seed failed, counting from live messages only", { err: err.message });
+  }
 }
 async function handleCommand(payload, reply) {
   const { t } = payload;

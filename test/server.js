@@ -141,6 +141,20 @@ const server = createServer(async (req, res) => {
       return
     }
 
+    // The real server polls chat.db's last_read_message_timestamp and emits
+    // this when it moves, which is what reading a chat on another device does.
+    if (req.method === 'POST' && url.pathname === '/__test/read-status') {
+      const { chatGuid } = await readBody(req)
+      const chat = chats.get(chatGuid)
+      if (!chat) {
+        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
+        return
+      }
+      sendJson(res, 200, envelope({ chatGuid }))
+      io.emit('chat-read-status-changed', chat)
+      return
+    }
+
     if (req.method === 'POST' && url.pathname === '/__test/omit-last-message') {
       const { chatGuid } = await readBody(req)
       lastMessageOmitted.add(chatGuid)

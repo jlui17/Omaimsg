@@ -83,6 +83,14 @@ export const UNNAMED_GROUP_TEST_CHAT = { guid: 'iMessage;+;chat1122334455', expe
 // mock's download route serves for it: a 1x1 PNG, exported so smoke.js can
 // byte-compare what the daemon wrote to disk.
 export const ATTACHMENT_TEST_CHAT = CHAT_DEFS[0].guid
+// A chat whose tail is what the real signal looks like: inbound messages the
+// Mac has recorded a read on, then a run it has not. A daemon seeding from the
+// server has to count exactly that run.
+export const SEED_UNREAD_TEST = { guid: CHAT_DEFS[3].guid, unread: 2 }
+// A chat whose newest inbound message is unread but which the Mac has NEVER
+// recorded a read on: unknowable, so it must seed as zero rather than as one
+// more unread.
+export const NEVER_TRACKED_TEST = { guid: CHAT_DEFS[4].guid }
 export const ATTACHMENT_TEST = { guid: 'MOCK-ATTACHMENT-1', mimeType: 'image/png', transferName: 'photo.png', width: 750, height: 1000 }
 export const ATTACHMENT_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -176,7 +184,38 @@ export function buildStore() {
     chat.lastMessage = list[list.length - 1]
   }
 
+  seedUnreadTail(chats, messages)
+  clearReadHistory(chats, messages)
+
   return { chats, messages }
+}
+
+// Deterministic tail for SEED_UNREAD_TEST: one read inbound message (which is
+// what proves the Mac tracks reads for this chat) followed by the unread run.
+function seedUnreadTail(chats, messages) {
+  const chat = chats.get(SEED_UNREAD_TEST.guid)
+  const list = messages.get(SEED_UNREAD_TEST.guid)
+  const base = Date.now() - 4 * 60 * 1000
+  const read = buildMessage({ chat, text: 'you already read this', fromMe: false, ts: base })
+  list.push(read)
+  for (let i = 0; i < SEED_UNREAD_TEST.unread; i++) {
+    const unread = buildMessage({ chat, text: `unread ${i + 1}`, fromMe: false, ts: base + (i + 1) * 60 * 1000 })
+    unread.dateRead = null
+    list.push(unread)
+  }
+  chat.lastMessage = list[list.length - 1]
+}
+
+// NEVER_TRACKED_TEST keeps an unread-looking tail with no read anywhere in the
+// chat, the case the server cannot answer.
+function clearReadHistory(chats, messages) {
+  const chat = chats.get(NEVER_TRACKED_TEST.guid)
+  const list = messages.get(NEVER_TRACKED_TEST.guid)
+  for (const message of list) message.dateRead = null
+  const trailing = buildMessage({ chat, text: 'never tracked', fromMe: false, ts: Date.now() - 3 * 60 * 1000 })
+  trailing.dateRead = null
+  list.push(trailing)
+  chat.lastMessage = trailing
 }
 
 export { buildMessage, nextRowId, guid as newGuid, BANK }

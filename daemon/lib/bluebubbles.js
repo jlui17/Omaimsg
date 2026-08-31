@@ -64,6 +64,10 @@ const ATTACHMENT_IMAGE_WIDTH = 1024
 // copies of one send can never be separated by that many other messages;
 // small enough that a long-lived daemon's set stays trivial.
 const SEEN_MESSAGE_GUIDS = 500
+// How far back a seed scan reads to find the end of a chat's unread run. Past
+// this the run is reported as the scan length: a chat nobody has touched in a
+// hundred messages is already saying "lots".
+const UNREAD_SCAN_LIMIT = 100
 
 // Both transports plus the contact index behind one interface: callers get
 // protocol-shaped Chat/Message objects and a connection state, never a
@@ -76,6 +80,7 @@ export class BlueBubblesSession {
     this.socket = null
     this.onConnection = () => {}
     this.onMessage = () => {}
+    this.onChatRead = () => {}
     this.seenMessageGuids = new Set()
   }
 
@@ -111,6 +116,19 @@ export class BlueBubblesSession {
 
     // BlueBubbles emits "new-message" for both inbound iMessages and the echo
     // of a message this daemon just sent (chats embedded on the payload).
+    // chat.db's own read boundary, polled by the server's ChatUpdatePoller and
+    // emitted whenever it moves -- which is what reading a chat on the phone
+    // does. Receiving it needs no Private API; only writing read state back to
+    // the Mac would.
+    this.socket.on('chat-read-status-changed', (payload) => {
+      const guid = payload?.guid || embeddedChat(payload)?.guid
+      if (!guid) {
+        logger.warn('bluebubbles: chat-read-status-changed with no chat guid, dropping')
+        return
+      }
+      this.onChatRead(guid)
+    })
+
     this.socket.on('new-message', (payload) => {
       const bbChat = embeddedChat(payload)
       if (!bbChat?.guid) {
@@ -148,6 +166,10 @@ export class BlueBubblesSession {
 
   async chats() {
     return this.client.queryAllChats(this.contacts)
+  }
+
+  async unreadCounts() {
+    return this.client.unreadCounts()
   }
 
   async messages(chatGuid, limit) {
@@ -207,6 +229,11 @@ class BlueBubblesClient {
   // client-requested display limit is applied later, after Store re-sorts
   // the full set.
   async queryAllChats(contactIndex = EMPTY_CONTACT_INDEX) {
+    const all = await this._queryAllChatsRaw()
+    return all.map((chat) => normalizeChat(chat, contactIndex))
+  }
+
+  async _queryAllChatsRaw() {
     const all = []
     let offset = 0
     while (true) {
@@ -218,7 +245,34 @@ class BlueBubblesClient {
       if (page.length < CHAT_PAGE_SIZE || all.length >= CHAT_FETCH_CAP) break
       offset += CHAT_PAGE_SIZE
     }
-    return all.slice(0, CHAT_FETCH_CAP).map((chat) => normalizeChat(chat, contactIndex))
+    return all.slice(0, CHAT_FETCH_CAP)
+  }
+
+  // BlueBubbles exposes no unread field, and iMessage's own boundary
+  // (chat.last_read_message_timestamp) is not serialized on a chat, so a
+  // message's `dateRead` is the only readable signal -- and it is trustworthy
+  // only per chat. A chat that has never recorded a read on any inbound
+  // message never tracked read state at all, so a missing dateRead there says
+  // nothing; verified on a real account, where 27 of 38 candidate chats were
+  // that case (mostly one-message threads years old). Where a chat HAS
+  // recorded reads, the unread run at its end is real.
+  async unreadCounts() {
+    const counts = {}
+    for (const chat of await this._queryAllChatsRaw()) {
+      const last = chat.lastMessage
+      if (!last || last.isFromMe || last.dateRead) continue
+      const messages = await this._request(`/api/v1/chat/${encodeURIComponent(chat.guid)}/message`, {
+        query: { limit: UNREAD_SCAN_LIMIT, sort: 'DESC' }
+      })
+      if (!messages.some((m) => !m.isFromMe && m.dateRead)) continue
+      let unread = 0
+      for (const message of messages) {
+        if (message.isFromMe || message.dateRead) break
+        unread += 1
+      }
+      if (unread > 0) counts[chat.guid] = unread
+    }
+    return counts
   }
 
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {

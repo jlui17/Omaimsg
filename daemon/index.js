@@ -72,6 +72,15 @@ if (config.ok) {
     pushState()
   }
 
+  // The Mac owns read state, so its verdict clears a chat outright rather than
+  // decrementing: reading on the phone marks the whole thread read at once.
+  session.onChatRead = (chatGuid) => {
+    const chat = store.chatList().find((c) => c.guid === chatGuid)
+    if (!chat || !chat.unread) return
+    store.markRead(chatGuid)
+    bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
+  }
+
   session.onMessage = ({ chatGuid, chat, message }) => {
     const cached = store.upsertFromMessage(chat, message)
     store.appendToThread(chatGuid, message)
@@ -79,6 +88,24 @@ if (config.ok) {
   }
 
   session.start()
+  seedUnread()
+}
+
+// One scan at startup. It deliberately does not fetch the chat list: a store
+// that has never been swept is what tells a client its cached answer would be
+// a single pushed chat rather than the account, so the seed waits for the
+// first real sweep to attach itself to. Failure is logged and dropped -- the
+// badge then counts only what this daemon sees live, as it did before.
+async function seedUnread() {
+  try {
+    store.seedUnread(await session.unreadCounts())
+    logger.info('unread: seeded from server', { unread: store.totalUnread() })
+    if (store.hasFullChatList())
+      bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
+    else pushState()
+  } catch (err) {
+    logger.warn('unread: seed failed, counting from live messages only', { err: err.message })
+  }
 }
 
 async function handleCommand(payload, reply) {

@@ -6,7 +6,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from './data.js'
+import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, SEED_UNREAD_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -312,6 +312,45 @@ async function main() {
     // One frame was the whole answer.
   }
   report('chats -> 7 chats', chatsFrame.chats?.length === 7, `got ${chatsFrame.chats?.length}`)
+
+  // Seeding from the server: the daemon scans at startup and the count attaches
+  // to the chat list when it lands. The scan races the first request, so poll.
+  let seeded = null
+  for (let attempt = 0; attempt < 20 && !seeded; attempt++) {
+    const frame = await settledChats(client, { limit: 40 })
+    const chat = frame.chats.find((c) => c.guid === SEED_UNREAD_TEST.guid)
+    if (chat && (chat.unread || 0) > 0) seeded = frame
+    else await sleep(200)
+  }
+  const seededChat = seeded?.chats.find((c) => c.guid === SEED_UNREAD_TEST.guid)
+  report(
+    'unread -> seeded from the server for a chat with a read history',
+    (seededChat?.unread || 0) === SEED_UNREAD_TEST.unread,
+    `got ${seededChat?.unread}, wanted ${SEED_UNREAD_TEST.unread}`
+  )
+  const neverTracked = seeded?.chats.find((c) => c.guid === NEVER_TRACKED_TEST.guid)
+  report(
+    'unread -> a chat the Mac never recorded a read on seeds as zero',
+    (neverTracked?.unread || 0) === 0,
+    `got ${neverTracked?.unread}`
+  )
+
+  // The Mac reporting the chat read is what clears it, no `read` frame from us.
+  await mockControl('read-status', { chatGuid: SEED_UNREAD_TEST.guid })
+  let clearedFrame = null
+  try {
+    clearedFrame = await client.waitFor(
+      (f) => f.t === 'chats' && f.chats.some((c) => c.guid === SEED_UNREAD_TEST.guid && (c.unread || 0) === 0),
+      4000
+    )
+  } catch {
+    // Reported by the assertion below.
+  }
+  report(
+    'chat-read-status-changed -> the chat clears without a read frame',
+    !!clearedFrame,
+    'no chats frame arrived with the chat cleared'
+  )
   // The seed left an unread behind. Clear it so the unread assertions further
   // down measure their own pushes and nothing else.
   client.send({ t: 'read', chatGuid: ATTACHMENT_TEST_CHAT })

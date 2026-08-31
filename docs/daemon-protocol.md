@@ -45,6 +45,8 @@ Message { guid, text, ts, fromMe, sender, attachments?, tempId? }   // ts = unix
 Message.attachments: [{ guid, mime, name, width?, height? }], present only when non-empty. `width`/`height` are the original pixel dimensions, present only when BlueBubbles reports both as non-zero, so the UI can reserve an image's box before the file arrives; the downloaded thumbnail keeps this aspect ratio. `mime` is the original mimeType ("" when BlueBubbles omits it) -- the UI decides what to render from it; the downloaded file for an image may still be PNG (server-side resize re-encodes).
 ```
 
-Unread counts are daemon-owned, in-memory only (reset on daemon restart): +1 per inbound message to a chat that isn't marked read since, cleared by `read`.
+Unread counts follow the Mac, which owns read state. A starting daemon seeds them from the server, then tracks live: +1 per inbound message, cleared by a `read` frame or by BlueBubbles reporting the chat read (`chat-read-status-changed`, which is what reading the chat on a phone triggers). Nothing is persisted -- the seed re-derives it on every start.
+
+Seeding is approximate, because BlueBubbles exposes no unread field: a chat counts as unread when its newest inbound messages carry no `dateRead` *and* the chat has recorded a read before, which is what proves the Mac tracks read state there. A chat that has never recorded one is unknowable and seeds as zero.
 
 Thread pages are cached the same way — in memory, dying with the daemon: the last 60 messages of each of the 30 most recently read chats, kept warm by inbound pushes.
