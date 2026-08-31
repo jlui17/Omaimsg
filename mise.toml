@@ -4,6 +4,10 @@ node = "24"
 # (daemon/dist/omaimsg-daemon.cjs). Bump deliberately and re-run the bundle.
 bun = "1.4.0"
 
+[tasks.setup]
+description = "Provision a fresh checkout or worktree with the dependencies the daemon and test servers need"
+run = "bun install"
+
 [tasks.test]
 description = "Every check: daemon protocol, the committed bundle, then the UI"
 run = [
