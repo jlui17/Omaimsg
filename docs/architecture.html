@@ -175,7 +175,7 @@
 </svg>
 
 <!-- ============ THE FOURTEEN ============ -->
-<h2>How it works, in fourteen pieces</h2>
+<h2>How it works, in fifteen pieces</h2>
 <p class="lede">Each one is short enough to check against a diff. Open one to see why we do
   it that way, and what it looks like when someone gets it wrong.</p>
 
@@ -391,19 +391,23 @@
 
 <details>
   <summary><span class="id" style="color:#e0af68">13</span>
-    Change the daemon, rebuild the bundle, run the smoke test.</summary>
+    Change the daemon, rebuild the bundle, run every check.</summary>
   <div class="body">
     <p>When someone installs with <code>omarchy plugin add</code>, they get a plain git clone.
     No build step, no <code>node_modules</code>. So the committed bundle <i>is</i> the daemon
     people run. Source without a rebuilt bundle means your fix doesn't exist for anyone who
     installed the normal way.</p>
-    <p><code>node test/smoke.js</code> starts a fake BlueBubbles server and the daemon, then
-    pushes every protocol frame through a real Unix socket. It's the check for any daemon or
-    protocol change, and it has to pass against the bundle too.</p>
+    <p><code>mise run test</code> is the check for any change, and it is three suites. The
+    first pushes every protocol frame through a real Unix socket against a fake BlueBubbles
+    server. The second runs that same suite against the committed bundle, because that is the
+    daemon people actually run. The third boots the real Omarchy shell in a headless
+    compositor and drives the widget and panel, so a QML change is checked by rendering it
+    rather than by checking the protocol underneath it.</p>
     <div class="tell"><span class="h">Something's off if you see</span>
       a diff touching <code>daemon/</code> without touching
       <code>daemon/dist/omaimsg-daemon.cjs</code> &#183; a new frame type with nothing in the
-      smoke test &#183; a new assertion nobody watched fail first.</div>
+      protocol suite &#183; a QML change checked only by the protocol suite &#183; a new
+      assertion nobody watched fail first.</div>
   </div>
 </details>
 
@@ -431,6 +435,29 @@
       limit and a page size kept as two numbers &#183; a cursor adjusted by one to fake an
       exclusive cut &#183; a last page discarded instead of merged because it said there was
       nothing older &#183; the panel scrolling itself back into place after a page lands.</div>
+  </div>
+</details>
+
+<details>
+  <summary><span class="id" style="color:#e0af68">15</span>
+    A test run owns everything it touches. Nothing in the test path takes a name that
+    another run wants.</summary>
+  <div class="body">
+    <p>Two checkouts of this repo have to be able to run the checks at the same time, so that
+    a change can be tested without waiting for whoever is testing theirs. That only holds if
+    every name a run binds belongs to that run alone.</p>
+    <p>Each piece of the test rig already does it. The protocol suite scopes its port, socket,
+    config, state, and cache by process id. The headless harness gives every boot its own
+    <code>XDG_RUNTIME_DIR</code> and its own compositor. The fake BlueBubbles server takes
+    port <code>0</code>, so the kernel assigns one and no run has to guess a free number or
+    hope another run picked differently.</p>
+    <p>One fixed name is enough to break it, and the failure never names itself: the second
+    run dies at a readiness timeout somewhere unrelated to what it binds.</p>
+    <div class="tell"><span class="h">Something's off if you see</span>
+      a fixed port or socket path in the test path &#183; a helper that finds <i>the</i> live
+      harness by scanning a shared directory, instead of being told which one &#183; a test
+      writing into a path it doesn't own &#183; a free port picked by binding and releasing
+      one, which hands the same number to two runs that start together.</div>
   </div>
 </details>
 
