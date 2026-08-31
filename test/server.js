@@ -1,8 +1,10 @@
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { Server as SocketIOServer } from 'socket.io'
 import { buildStore, buildMessage, pick, ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, BANK, CONTACTS, ORPHANED_TEST, UNREACHABLE_TEST } from './data.js'
 
-const PORT = Number(process.argv[2]) || 3010
+// Port 0 asks the kernel for a free one, which is how two harnesses coexist.
+const PORT = process.argv[2] === undefined ? 3010 : Number(process.argv[2])
 const PASSWORD = process.env.MOCK_BB_PASSWORD || 'testpass'
 const REPLY_DELAY_MS = 3000
 const UNPROMPTED_INTERVAL_MS = 45_000
@@ -292,5 +294,15 @@ if (process.env.MOCK_BB_UNPROMPTED === '1') {
 }
 
 server.listen(PORT, () => {
-  log(`listening on http://localhost:${PORT} (password: ${PASSWORD})`)
+  const port = server.address().port
+  // Only this process knows the port when the kernel picked it, so it points
+  // the daemon's config at itself. Written before the line the harness gates
+  // the daemon's start on, so the daemon cannot read a config without a url.
+  const configPath = process.env.OMAIMSG_MOCK_CONFIG
+  if (configPath) {
+    const config = JSON.parse(readFileSync(configPath, 'utf8'))
+    config.serverUrl = `http://127.0.0.1:${port}`
+    writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n')
+  }
+  log(`listening on http://localhost:${port} (password: ${PASSWORD})`)
 })

@@ -1,5 +1,4 @@
 {
-  "serverUrl": "http://127.0.0.1:3010",
   "password": "testpass",
   "cache": { "threads": 30, "messagesPerThread": 5 }
 }

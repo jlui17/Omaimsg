@@ -10,10 +10,18 @@
       "name": "bluebubbles",
       "argv": [
         "node",
-        "${PROFILE_DIR}/../server.js"
+        "${PROFILE_DIR}/../server.js",
+        "0"
       ],
       "ready": {
         "log": "listening on http"
+      },
+      "seed": {
+        "from": "${PROFILE_DIR}/daemon-config.json",
+        "to": "${WORK}/daemon-config.json"
+      },
+      "env_out": {
+        "OMAIMSG_MOCK_CONFIG": "${WORK}/daemon-config.json"
       }
     },
     {
@@ -26,7 +34,7 @@
         "socket": "${XDG_RUNTIME_DIR}/omaimsg.sock"
       },
       "env_out": {
-        "OMAIMSG_CONFIG": "${PROFILE_DIR}/daemon-config.json"
+        "OMAIMSG_CONFIG": "${WORK}/daemon-config.json"
       }
     }
   ],

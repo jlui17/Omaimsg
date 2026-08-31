@@ -23,7 +23,7 @@ To remove it: `omarchy plugin remove io.omaimsg`.
 Dev tooling is pinned in `mise.toml` (Node and Bun); `mise install` gets both.
 
 ```sh
-bun install
+mise run setup                     # dependencies
 node test/server.js                # fake BlueBubbles on :3010
 OMAIMSG_CONFIG=test/config.json node daemon/index.js
 rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
