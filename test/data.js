@@ -87,6 +87,13 @@ export const ATTACHMENT_TEST_CHAT = CHAT_DEFS[0].guid
 // Mac has recorded a read on, then a run it has not. A daemon seeding from the
 // server has to count exactly that run.
 export const SEED_UNREAD_TEST = { guid: CHAT_DEFS[3].guid, unread: 2 }
+// A chat whose messages chat.db never linked to it: the chat-scoped route
+// serves nothing, and only a handle-scoped query reaches them.
+export const ORPHANED_TEST = { guid: CHAT_DEFS[1].guid, address: 'sam.patel@icloud.com' }
+// A group whose messages chat.db never linked either. A handle query cannot
+// stand in for a group's chat join, so this one stays unreachable and is what
+// the panel has to name rather than render as an empty thread.
+export const UNREACHABLE_TEST = { guid: CHAT_DEFS[2].guid }
 // A chat whose newest inbound message is unread but which the Mac has NEVER
 // recorded a read on: unknowable, so it must seed as zero rather than as one
 // more unread.

@@ -6,7 +6,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, SEED_UNREAD_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT } from './data.js'
+import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, ORPHANED_TEST, SEED_UNREAD_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT, UNREACHABLE_TEST } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -746,6 +746,24 @@ async function main() {
     'limit 0 -> the whole list, where a numeric limit caps it',
     cappedFrame.chats.length === 3 && uncappedFrame.chats.length === 7,
     `capped ${cappedFrame.chats.length}, uncapped ${uncappedFrame.chats.length}`
+  )
+
+  // A chat whose messages chat.db never linked to it: the chat-scoped route
+  // serves nothing, and only the handle-scoped fallback reaches them.
+  client.send({ t: 'messages', chatGuid: ORPHANED_TEST.guid, limit: 60 })
+  const orphanFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === ORPHANED_TEST.guid)
+  report(
+    'messages -> a chat with no chat-linked messages is recovered by handle',
+    (orphanFrame.messages || []).length > 0 && orphanFrame.unavailable !== true,
+    `got ${(orphanFrame.messages || []).length} messages, unavailable=${orphanFrame.unavailable}`
+  )
+
+  client.send({ t: 'messages', chatGuid: UNREACHABLE_TEST.guid, limit: 60 })
+  const unreachableFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === UNREACHABLE_TEST.guid)
+  report(
+    'messages -> a group the fallback cannot reach is reported unavailable',
+    (unreachableFrame.messages || []).length === 0 && unreachableFrame.unavailable === true,
+    JSON.stringify({ messages: (unreachableFrame.messages || []).length, unavailable: unreachableFrame.unavailable })
   )
 
   client.send({ t: 'ping' })

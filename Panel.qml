@@ -42,6 +42,7 @@ Panel {
     return out
   }
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
+  readonly property bool threadUnavailable: client ? client.activeThreadUnavailable === true : false
   readonly property int chatLimit: root.client ? root.client.chatLimit : 40
   readonly property int messageLimit: root.setting("messageLimit", 60)
   // Relative timestamps are computed client-side, so a list this old is stale
@@ -1139,7 +1140,12 @@ Panel {
             visible: root.messages.length === 0
             // "No messages yet." is a claim about the chat, so it waits until a
             // page has actually come back; until then the thread is loading.
-            text: root.threadLoaded ? "No messages yet." : "Loading…"
+            // The Mac can hold a chat whose messages it never linked to it, and
+            // no BlueBubbles route reaches those -- say so rather than implying
+            // the conversation is empty.
+            text: root.threadUnavailable
+              ? "The Mac has no messages filed under this conversation."
+              : (root.threadLoaded ? "No messages yet." : "Loading…")
             color: root.secondaryForeground
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

@@ -7180,6 +7180,7 @@ class BlueBubblesSession {
     this.client = new BlueBubblesClient(config);
     this.contacts = EMPTY_CONTACT_INDEX;
     this.socket = null;
+    this.soloParticipants = new Map;
     this.onConnection = () => {};
     this.onMessage = () => {};
     this.onChatRead = () => {};
@@ -7247,13 +7248,26 @@ class BlueBubblesSession {
     this.socket?.close();
   }
   async chats() {
-    return this.client.queryAllChats(this.contacts);
+    const raw = await this.client.queryAllChatsRaw();
+    this.soloParticipants.clear();
+    for (const chat of raw) {
+      const participants = chat.participants || [];
+      if (participants.length === 1)
+        this.soloParticipants.set(chat.guid, participants[0].address);
+    }
+    return raw.map((chat) => normalizeChat(chat, this.contacts));
   }
   async unreadCounts() {
     return this.client.unreadCounts();
   }
   async messages(chatGuid, limit) {
-    return this.client.getChatMessages(chatGuid, limit, this.contacts);
+    const messages = await this.client.getChatMessages(chatGuid, limit, this.contacts);
+    if (messages.length)
+      return messages;
+    const address = this.soloParticipants.get(chatGuid);
+    if (!address)
+      return messages;
+    return this.client.getMessagesByHandle(address, limit, this.contacts);
   }
   async sendText({ chatGuid, text, tempGuid }) {
     return this.client.sendText({ chatGuid, text, tempGuid });
@@ -7298,11 +7312,7 @@ class BlueBubblesClient {
     }
     return envelope.data;
   }
-  async queryAllChats(contactIndex = EMPTY_CONTACT_INDEX) {
-    const all = await this._queryAllChatsRaw();
-    return all.map((chat) => normalizeChat(chat, contactIndex));
-  }
-  async _queryAllChatsRaw() {
+  async queryAllChatsRaw() {
     const all = [];
     let offset = 0;
     while (true) {
@@ -7319,7 +7329,7 @@ class BlueBubblesClient {
   }
   async unreadCounts() {
     const counts = {};
-    for (const chat of await this._queryAllChatsRaw()) {
+    for (const chat of await this.queryAllChatsRaw()) {
       const last = chat.lastMessage;
       if (!last || last.isFromMe || last.dateRead)
         continue;
@@ -7342,6 +7352,17 @@ class BlueBubblesClient {
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
       query: { limit, sort: "DESC", with: "attachment" }
+    });
+    return data.map((message) => normalizeMessage(message, contactIndex)).reverse();
+  }
+  async getMessagesByHandle(address, limit, contactIndex = EMPTY_CONTACT_INDEX) {
+    const data = await this._request("/api/v1/message/query", {
+      method: "POST",
+      body: {
+        limit,
+        sort: "DESC",
+        where: [{ statement: "handle.id = :address", args: { address } }]
+      }
     });
     return data.map((message) => normalizeMessage(message, contactIndex)).reverse();
   }
@@ -7555,12 +7576,12 @@ async function handleCommand(payload, reply) {
       }
       const served = store.cachedThread(payload.chatGuid);
       if (served)
-        reply({ t: "messages", chatGuid: payload.chatGuid, messages: served });
+        reply({ t: "messages", chatGuid: payload.chatGuid, messages: served, unavailable: served.length === 0 });
       try {
         const messages = await session.messages(payload.chatGuid, payload.limit || 60);
         const changed = store.cacheThread(payload.chatGuid, messages);
         if (!served || changed)
-          reply({ t: "messages", chatGuid: payload.chatGuid, messages });
+          reply({ t: "messages", chatGuid: payload.chatGuid, messages, unavailable: messages.length === 0 });
       } catch (err) {
         if (served)
           logger.warn("messages: revalidation failed, cached page stands", { chatGuid: payload.chatGuid, err: err.message });

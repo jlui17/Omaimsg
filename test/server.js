@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { Server as SocketIOServer } from 'socket.io'
-import { buildStore, buildMessage, pick, ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, BANK, CONTACTS } from './data.js'
+import { buildStore, buildMessage, pick, ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, BANK, CONTACTS, ORPHANED_TEST, UNREACHABLE_TEST } from './data.js'
 
 const PORT = Number(process.argv[2]) || 3010
 const PASSWORD = process.env.MOCK_BB_PASSWORD || 'testpass'
@@ -19,6 +19,10 @@ let chatFetchDelayMs = 0
 // some chats even though the query asks for the field, per chat rather than per
 // request. This reproduces that for the chats a test names.
 const lastMessageOmitted = new Set()
+// chat.db can hold messages with no chat link. The real server's chat-scoped
+// routes inner-join chats and so serve nothing for those chats, while a
+// handle-scoped query with no chat relation still finds the messages.
+const chatLinkBroken = new Set([ORPHANED_TEST.guid, UNREACHABLE_TEST.guid])
 
 function log(...args) {
   console.error('omaimsg-mock:', ...args)
@@ -92,7 +96,7 @@ const server = createServer(async (req, res) => {
     const messageMatch = url.pathname.match(/^\/api\/v1\/chat\/(.+)\/message$/)
     if (req.method === 'GET' && messageMatch) {
       const chatGuid = decodeURIComponent(messageMatch[1])
-      const list = messages.get(chatGuid)
+      const list = chatLinkBroken.has(chatGuid) ? [] : messages.get(chatGuid)
       if (!list) {
         sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
         return
@@ -186,6 +190,22 @@ const server = createServer(async (req, res) => {
       chat.lastMessage = message
       sendJson(res, 200, envelope(message))
       if (url.pathname === '/__test/push-message') io.emit('new-message', message)
+      return
+    }
+
+    // Mirrors MessageRepository.getMessages: `handle` is left-joined so a
+    // where clause on it reaches messages with no chat link, and chat.db's
+    // address column is `id`.
+    if (req.method === 'POST' && url.pathname === '/api/v1/message/query') {
+      const body = await readBody(req)
+      const clause = (body.where || [])[0]
+      const address = clause?.args?.address
+      const all = [...messages.values()].flat()
+      const matched = address
+        ? all.filter((m) => !m.isFromMe && m.handle?.address === address)
+        : []
+      const ordered = [...matched].reverse().slice(0, body.limit || 100)
+      sendJson(res, 200, envelope(ordered))
       return
     }
 

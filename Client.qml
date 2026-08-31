@@ -54,6 +54,11 @@ Item {
   property var threadCache: ({})
   readonly property bool activeThreadLoaded: root.activeChatGuid.length > 0
     && root.threadCache[root.activeChatGuid] !== undefined
+  // Guids the daemon answered with an empty page. Kept per guid rather than as
+  // one flag so leaving a thread and coming back reads the same answer.
+  property var unavailableThreads: ({})
+  readonly property bool activeThreadUnavailable: root.activeChatGuid.length > 0
+    && root.unavailableThreads[root.activeChatGuid] === true
 
   // Attachment guid -> file:// URL of the daemon-downloaded file, plus the
   // in-flight set. Both are replaced wholesale on every change so delegate
@@ -405,6 +410,9 @@ Item {
         break
 
       case "messages":
+        var unavailable = Object.assign({}, root.unavailableThreads)
+        unavailable[frame.chatGuid || ""] = frame.unavailable === true
+        root.unavailableThreads = unavailable
         if ((frame.chatGuid || "") === root.activeChatGuid) {
           root.setActiveMessages(root.withKnownTempIds(frame.messages || []))
         }

@@ -167,12 +167,15 @@ async function handleCommand(payload, reply) {
       // Cache-first, then revalidate: a warm thread renders before the
       // BlueBubbles round-trip, and a second `messages` frame follows only
       // when the server's page turns out to differ (docs/daemon-protocol.md).
+      // An empty page is reported as such rather than left to look like a
+      // thread still loading: some chats hold messages chat.db never linked to
+      // them, and nothing the server offers can reach those.
       const served = store.cachedThread(payload.chatGuid)
-      if (served) reply({ t: 'messages', chatGuid: payload.chatGuid, messages: served })
+      if (served) reply({ t: 'messages', chatGuid: payload.chatGuid, messages: served, unavailable: served.length === 0 })
       try {
         const messages = await session.messages(payload.chatGuid, payload.limit || 60)
         const changed = store.cacheThread(payload.chatGuid, messages)
-        if (!served || changed) reply({ t: 'messages', chatGuid: payload.chatGuid, messages })
+        if (!served || changed) reply({ t: 'messages', chatGuid: payload.chatGuid, messages, unavailable: messages.length === 0 })
       } catch (err) {
         // A client already holding a cached page keeps it rather than being
         // told the thread failed; the `state` frame is what surfaces a
