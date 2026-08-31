@@ -9,8 +9,8 @@
     {
       "name": "bluebubbles",
       "argv": [
-        "node",
-        "${PROFILE_DIR}/../server.js"
+        "${PROFILE_DIR}/mock.sh",
+        "${WORK}"
       ],
       "ready": {
         "log": "listening on http"
@@ -26,7 +26,7 @@
         "socket": "${XDG_RUNTIME_DIR}/omaimsg.sock"
       },
       "env_out": {
-        "OMAIMSG_CONFIG": "${PROFILE_DIR}/daemon-config.json"
+        "OMAIMSG_CONFIG": "${WORK}/daemon-config.json"
       }
     }
   ],
