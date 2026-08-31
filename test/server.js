@@ -15,6 +15,10 @@ const { chats, messages } = buildStore()
 // leaves the daemon's cache stale enough to need revalidating.
 let messageFetchDelayMs = 0
 let chatFetchDelayMs = 0
+// A real BlueBubbles server answers `/chat/query` with `lastMessage: null` for
+// some chats even though the query asks for the field, per chat rather than per
+// request. This reproduces that for the chats a test names.
+const lastMessageOmitted = new Set()
 
 function log(...args) {
   console.error('omaimsg-mock:', ...args)
@@ -78,7 +82,9 @@ const server = createServer(async (req, res) => {
       // new message stays wherever it was in this insertion order until a
       // full-list re-sort recovers it, same as the real server's index-200
       // cutoff missing an `any;-;` chat entirely.
-      const list = [...chats.values()].slice(offset, offset + limit)
+      const list = [...chats.values()]
+        .slice(offset, offset + limit)
+        .map((chat) => (lastMessageOmitted.has(chat.guid) ? { ...chat, lastMessage: null } : chat))
       setTimeout(() => sendJson(res, 200, envelope(list)), chatFetchDelayMs)
       return
     }
@@ -132,6 +138,13 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/__test/chat-delay') {
       chatFetchDelayMs = Number((await readBody(req)).ms) || 0
       sendJson(res, 200, envelope({ ms: chatFetchDelayMs }))
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/__test/omit-last-message') {
+      const { chatGuid } = await readBody(req)
+      lastMessageOmitted.add(chatGuid)
+      sendJson(res, 200, envelope({ chatGuid }))
       return
     }
 

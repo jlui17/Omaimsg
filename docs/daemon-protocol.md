@@ -38,6 +38,8 @@ POC scope: text messages plus image attachments. A message with attachments carr
 Chat    { guid, name, isGroup, pinned, lastMessage: { text, ts, fromMe }, unread }   // isGroup: >1 participant
 
 Chat-list order: pinned chats first, then unpinned; most-recent lastMessage.ts first within each block, chats with no lastMessage at the end of their block.
+
+Chat.lastMessage is sticky: once the daemon has a preview for a chat, a later BlueBubbles fetch that omits the field (the server does this per chat, even when the field is asked for) leaves the known one standing rather than blanking it. A chat therefore reads `null` only while nothing has ever been seen for it.
 Message { guid, text, ts, fromMe, sender, attachments?, tempId? }   // ts = unix ms; sender = display name, "" when fromMe; tempId only on echoed own sends
 
 Message.attachments: [{ guid, mime, name, width?, height? }], present only when non-empty. `width`/`height` are the original pixel dimensions, present only when BlueBubbles reports both as non-zero, so the UI can reserve an image's box before the file arrives; the downloaded thumbnail keeps this aspect ratio. `mime` is the original mimeType ("" when BlueBubbles omits it) -- the UI decides what to render from it; the downloaded file for an image may still be PNG (server-side resize re-encodes).

@@ -177,6 +177,21 @@ async function settledChats(client, payload = {}) {
   return frame
 }
 
+// `state` frames carry no request id, and a `read` sent without collecting its
+// reply leaves one in the backlog, so a later `waitFor` can answer with a total
+// from before its own read. Drain first; nothing else emits `state` unprompted.
+async function settledRead(client, chatGuid) {
+  while (true) {
+    try {
+      await client.waitFor((f) => f.t === 'state', 200)
+    } catch {
+      break
+    }
+  }
+  client.send({ t: 'read', chatGuid })
+  return client.waitFor((f) => f.t === 'state', 3000)
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -350,12 +365,33 @@ async function main() {
   })
   report('chats -> sorted by lastMessage.ts descending', descending, JSON.stringify(reorderedFrame.chats.map((c) => c.lastMessage?.ts)))
 
+  // A pushed preview has to survive the next full sweep even when the server
+  // answers `/chat/query` with no lastMessage for that chat. Losing it drops
+  // the chat to the end of the recency sort with a blank preview, which is how
+  // a chat carrying an unread ends up past the page any client asks for.
+  const omitTarget = SHORTCODE_TEST_CHAT.guid
+  await mockControl('push-message', { chatGuid: omitTarget, text: 'preview survives a sweep' })
+  await client.waitFor((f) => f.t === 'message' && f.chatGuid === omitTarget)
+  await mockControl('omit-last-message', { chatGuid: omitTarget })
+  const sweptFrame = await settledChats(client)
+  const swept = sweptFrame.chats.find((c) => c.guid === omitTarget)
+  report(
+    'chats -> a pushed preview survives a sweep that omits lastMessage',
+    typeof swept?.lastMessage?.ts === 'number' && swept.lastMessage.text === 'preview survives a sweep',
+    JSON.stringify(swept)
+  )
+  report(
+    'chats -> that chat still sorts by recency, not to the end',
+    sweptFrame.chats[0]?.guid === omitTarget,
+    `got ${sweptFrame.chats[0]?.guid}, target at index ${sweptFrame.chats.findIndex((c) => c.guid === omitTarget)}`
+  )
+  await settledRead(client, omitTarget)
+
   // Drain orderTarget's canned reply and mark it read so its unread
   // contribution doesn't leak into the unread assertions below, which are
   // scoped to chatGuid's own send/reply round trip.
   await client.waitFor((f) => f.t === 'message' && f.chatGuid === orderTarget && f.message.fromMe === false, 6000)
-  client.send({ t: 'read', chatGuid: orderTarget })
-  await client.waitFor((f) => f.t === 'state', 3000)
+  await settledRead(client, orderTarget)
 
   const chatGuid = chatsFrame.chats[0].guid
   client.send({ t: 'messages', chatGuid, limit: 60 })
@@ -568,8 +604,7 @@ async function main() {
     `unread=${replyFrame.unread} baseline=${unreadBaseline}`
   )
 
-  client.send({ t: 'read', chatGuid })
-  const stateAfterRead = await client.waitFor((f) => f.t === 'state', 3000)
+  const stateAfterRead = await settledRead(client, chatGuid)
   report('read -> total unread clears', stateAfterRead.unread === 0, `unread=${stateAfterRead.unread}`)
 
   const chatsAfterRead = await settledChats(client)

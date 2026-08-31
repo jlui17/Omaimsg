@@ -4322,7 +4322,12 @@ class Store {
     this.sweptChats = true;
     for (const chat of normalizedChats) {
       const existing = this.chats.get(chat.guid);
-      this.chats.set(chat.guid, { ...chat, unread: existing?.unread || 0, pinned: this.pins.pinned.has(chat.guid) });
+      this.chats.set(chat.guid, {
+        ...chat,
+        lastMessage: chat.lastMessage || existing?.lastMessage || null,
+        unread: existing?.unread || 0,
+        pinned: this.pins.pinned.has(chat.guid)
+      });
     }
     return this.chatList();
   }
