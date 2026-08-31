@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from quickshell_mcp import server as srv
+from quickshell_mcp.examples.driver import CheckError, Driver
+
+HERE = Path(__file__).resolve().parent
+GLYPH = "\U000f0361"
+# The daemon serves a page this size and caches exactly that tail, so a thread
+# longer than it can only arrive in more than one page.
+PAGE = json.loads((HERE / "daemon-config.json").read_text())["cache"]["messagesPerThread"]
+
+
+def find(pred: str, root: str = "win(0)") -> str:
+    # The bar's object graph has no stable indices, so every node is addressed
+    # by what it is. dev._children is the probe's own walker.
+    return (
+        "(function(){var f=null,seen=[];"
+        "(function rec(o,d){ if(!o||f||d>18||seen.indexOf(o)>=0) return; seen.push(o);"
+        f" try{{ if({pred}) {{ f=o; return; }} }}catch(e){{}}"
+        " var k=dev._children(o); for(var i=0;i<k.length;i++) rec(k[i],d+1); })"
+        f"({root},0); return f; }})()"
+    )
+
+
+BAR = find("o.moduleName==='io.omaimsg' && String(o).indexOf('BarWidget')>=0")
+PANEL = find("o.moduleName==='io.omaimsg' && String(o).indexOf('Panel')>=0")
+CLIENT = find("o.effectiveSocketPath!==undefined")
+BUTTON = find("o.tooltipText!==undefined", root=BAR)
+COMPOSER = find("String(o.placeholderText||'').indexOf('Message')===0")
+
+
+def keys(*args: str) -> None:
+    # wtype's virtual keyboard dies with the process, and sway drops every event
+    # it delivers before the keymap settles. The sleeps hold the keyboard open
+    # either side of the keystroke; without them nothing arrives at all.
+    h = srv.HARNESS
+    env = dict(os.environ, WAYLAND_DISPLAY=h._wl, XDG_RUNTIME_DIR=str(h._xdg))
+    subprocess.run(["wtype", "-s", "300", *args, "-s", "300"], env=env, check=True)
+
+
+def q(node: str, body: str) -> str:
+    return f"(function(){{var x={node}; if(!x) return null; {body} }})()"
+
+
+def wait_stable(d: Driver, expr: str, settle: float = 2.0, timeout: float = 25.0):
+    deadline = time.time() + timeout
+    last, unchanged_since = None, time.time()
+    while time.time() < deadline:
+        now = d.eval(expr)
+        if now != last:
+            last, unchanged_since = now, time.time()
+        elif time.time() - unchanged_since >= settle:
+            return last
+        time.sleep(0.25)
+    return last
+
+
+def wait_for(d: Driver, expr: str, ok, timeout: float = 20.0):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        last = d.eval(expr)
+        if ok(last):
+            return last
+        time.sleep(0.25)
+    return last
+
+
+def run(d: Driver) -> None:
+    d.section("wiring")
+    conn = wait_for(d, q(CLIENT, "return x.connection;"), lambda v: v == "connected")
+    d.eq("client reaches the daemon", conn, "connected")
+
+    d.section("unread badge")
+    # The badge string is built in BarWidget.qml, so the count is set on the
+    # client and read back off the rendered button.
+    def badge(n: int):
+        d.eval(q(CLIENT, f"x.unread={n}; return x.unread;"))
+        return d.eval(q(BUTTON, "return [x.text, x.active, x.tooltipText];"))
+
+    text, active, tip = badge(0)
+    d.eq("no unread shows the bare glyph", text, GLYPH)
+    d.eq("no unread leaves the button inactive", active, False)
+    d.eq("no unread tooltip", tip, "Omaimsg")
+
+    text, active, tip = badge(3)
+    d.eq("unread renders beside the glyph", text, f"{GLYPH} 3")
+    d.eq("unread marks the button active", active, True)
+    d.eq("unread tooltip counts", tip, "Omaimsg · 3 unread")
+
+    text, _, _ = badge(150)
+    d.eq("a count over 99 clamps", text, f"{GLYPH} 99+")
+
+    d.section("chat list")
+    d.eval(q(BAR, "x.open(); return x.opened;"))
+    d.check("panel opens", d.eval(q(BAR, "return x.opened;")) is True)
+
+    guids = wait_for(
+        d,
+        q(PANEL, "return (x.visibleChats||[]).map(function(c){return c.guid;});"),
+        lambda v: bool(v),
+    )
+    d.check("the panel lists chats", bool(guids))
+
+    # The daemon sorts the chat list itself and never trusts BlueBubbles'
+    # ranking, so the order it sends is the order that must reach the screen.
+    served = d.eval(q(CLIENT, "return (x.chats||[]).map(function(c){return c.guid;});"))
+    d.eq("the rendered order is the daemon's order", guids, served)
+
+    empty = d.eval(
+        q(PANEL, "var out=[],seen=[];"
+                 "(function rec(o,dd){ if(!o||dd>18||seen.indexOf(o)>=0) return; seen.push(o);"
+                 " try{ if(typeof o.text==='string'&&o.text&&o.visible!==false) out.push(o.text); }catch(e){}"
+                 " var k=dev._children(o); for(var i=0;i<k.length;i++) rec(k[i],dd+1); })(x,0);"
+                 " return out.indexOf('No conversations yet.')>=0;")
+    )
+    d.eq("the empty state is not showing", empty, False)
+
+    d.section("pinning")
+    target = guids[2]
+    d.eval(q(CLIENT, f"x.setPinned({target!r}, true); return true;"))
+    pinned = wait_for(
+        d,
+        q(PANEL, "return (x.visibleChats||[]).map(function(c){return c.guid;});"),
+        lambda v: bool(v) and v[0] == target,
+    )
+    d.eq("a pinned chat renders first", pinned[0], target)
+
+    d.eval(q(CLIENT, f"x.setPinned({target!r}, false); return true;"))
+    restored = wait_for(
+        d,
+        q(PANEL, "return (x.visibleChats||[]).map(function(c){return c.guid;});"),
+        lambda v: bool(v) and v[0] != target,
+    )
+    d.eq("unpinning restores the recency order", restored, served)
+
+    d.section("keyboard navigation")
+    state = q(PANEL, "return [x.focusSection, x.cursorIndex, x.view];")
+    d.eq("the chat list starts focused at the top", d.eval(state), ["chats", 0, "chats"])
+
+    keys("j")
+    d.eq("j walks down the chat list", d.eval(state)[1], 1)
+    keys("j")
+    d.eq("j keeps walking", d.eval(state)[1], 2)
+    keys("k")
+    d.eq("k walks back up", d.eval(state)[1], 1)
+
+    keys("l")
+    view = wait_for(d, state, lambda v: v[2] == "thread")
+    d.eq("l opens the chat under the cursor", view[2], "thread")
+    d.eq("the opened thread is the one at the cursor", d.eval(q(PANEL, "return x.activeGuid;")), served[1])
+
+    d.section("composer")
+    keys("i")
+    focused = wait_for(d, state, lambda v: v[0] == "composer")
+    d.eq("i focuses the composer", focused[0], "composer")
+
+    sent = "typed by the harness"
+    keys(sent)
+    typed = wait_for(d, q(COMPOSER, "return x.text;"), lambda v: v == sent)
+    d.eq("typing lands in the composer", typed, sent)
+
+    keys("-k", "Return")
+    landed = wait_for(
+        d,
+        q(PANEL, "return (x.messages||[]).map(function(m){return m.text;});"),
+        lambda v: isinstance(v, list) and sent in v,
+    )
+    d.check("Enter sends the message into the thread", sent in (landed or []))
+    d.eq("sending clears the composer", d.eval(q(COMPOSER, "return x.text;")), "")
+
+    d.section("thread paging")
+    keys("-k", "Escape")  # composer -> messages
+    keys("-k", "Escape")  # thread -> chat list
+    wait_for(d, state, lambda v: v[2] == "chats")
+    keys("j")
+    keys("l")
+    wait_for(d, state, lambda v: v[2] == "thread")
+
+    rows = wait_stable(
+        d, q(PANEL, "return (x.messages||[]).map(function(m){return [m.guid, m.ts];});")
+    )
+    d.check("the thread settles with messages", bool(rows))
+    d.check(
+        f"reaching the oldest end pages past the first {PAGE}",
+        len(rows) > PAGE,
+    )
+
+    stamps = [ts for _, ts in rows]
+    d.eq("pages join in timestamp order", stamps, sorted(stamps))
+    d.eq("no message is appended twice", len(rows), len({guid for guid, _ in rows}))
+
+    # The panel stops asking once the view has enough to scroll, so the end of
+    # the thread is only reached by draining it. The daemon's cut is inclusive,
+    # which is what makes the duplicate check below worth pinning.
+    guid = d.eval(q(PANEL, "return x.activeGuid;"))
+    exhausted_q = q(CLIENT, f"return x.exhaustedThreads[{guid!r}]===true;")
+    for _ in range(12):
+        if d.eval(exhausted_q):
+            break
+        d.eval(q(CLIENT, "x.loadOlderMessages(); return true;"))
+        time.sleep(0.6)
+    d.eq("draining the thread ends in an exhausted page", d.eval(exhausted_q), True)
+
+    drained = d.eval(q(PANEL, "return (x.messages||[]).map(function(m){return m.guid;});"))
+    d.eq("the inclusive cut never duplicates a message", len(drained), len(set(drained)))
+    d.check("draining only ever adds", len(drained) >= len(rows))
+
+
+def main() -> int:
+    d = Driver(HERE / "profile.json").boot()
+    try:
+        run(d)
+        return d.report("omaimsg-ui")
+    except CheckError as e:
+        print(f"  ABORT {e}")
+        return d.report("omaimsg-ui") or 1
+    finally:
+        d.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -8,7 +8,7 @@ Prototype code answering one question: is a keyboard-driven iMessage popup in th
 
 - `manifest.json`, `BarWidget.qml`, `Panel.qml`, `Client.qml` — the Omarchy shell plugin, at the repo root (required by `omarchy plugin add`, which clones the repo straight into the plugins dir).
 - `daemon/` — Node daemon. Speaks REST + Socket.IO to BlueBubbles, serves NDJSON over a Unix socket (`$XDG_RUNTIME_DIR/omaimsg.sock`) to the plugin. One daemon, many plugin clients (one per monitor).
-- `test/` — the test harness: a fake BlueBubbles server with canned chats, plus `smoke.js`, an end-to-end test of the daemon over the real Unix socket.
+- `test/` — the test harness: a fake BlueBubbles server with canned chats, `smoke.js` for the daemon over the real Unix socket, and `qsmcp/` for the plugin rendered headlessly. See `TESTING.md`.
 
 ## Install
 
@@ -26,7 +26,9 @@ Dev tooling is pinned in `mise.toml` (Node and Bun); `mise install` gets both.
 bun install
 node test/server.js                # fake BlueBubbles on :3010
 OMAIMSG_CONFIG=test/config.json node daemon/index.js
-rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/
+rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
+  --exclude .mcp.json --exclude .claude --exclude mise.toml --exclude /test/qsmcp/stage \
+  ./ ~/.config/omarchy/plugins/io.omaimsg/
 omarchy plugin enable io.omaimsg   # widget lands in the bar's right section
 ```
 
@@ -47,6 +49,21 @@ Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the
 Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
 
 The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `bun run bundle` and commit the result in the same round.
+
+## Contributing
+
+```sh
+sudo pacman -S sway cue jq wtype   # UI checks only
+bun install
+mise run test                      # daemon protocol, the committed bundle, then the UI
+```
+
+`TESTING.md` has the rest: what each suite covers, the two manual checks, and the headless harness
+an agent uses to drive the plugin.
+
+Issues live on GitHub (`gh` CLI). A ticket lands as one commit closing it (`Closes #N`);
+adjustments asked for mid-round get squashed into that commit. Review feedback on an open PR is
+the other case and keeps one commit per item.
 
 ## POC scope
 

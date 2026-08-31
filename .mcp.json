@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "quickshell": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/jlui17/quickshell-mcp@5b957f4acb11e35326ee6cc39c661d101599279d",
+        "quickshell-mcp",
+        "--profile",
+        "test/qsmcp/profile.json"
+      ]
+    }
+  }
+}

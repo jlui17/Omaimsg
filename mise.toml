@@ -3,3 +3,31 @@ node = "24"
 # Pinned because `bun run bundle` produces a committed artifact
 # (daemon/dist/omaimsg-daemon.cjs). Bump deliberately and re-run the bundle.
 bun = "1.4.0"
+
+[tasks.test]
+description = "Every check: daemon protocol, the committed bundle, then the UI"
+run = [
+  "mise run test:daemon",
+  "mise run test:bundle",
+  "mise run test:ui",
+]
+
+[tasks."test:daemon"]
+description = "Daemon protocol end to end over the real Unix socket"
+run = "node test/smoke.js"
+
+[tasks."test:bundle"]
+description = "The same protocol run against the committed daemon bundle"
+run = "OMAIMSG_DAEMON_ENTRY=daemon/dist/omaimsg-daemon.cjs node test/smoke.js"
+
+[tasks."test:ui"]
+description = "Bar widget and panel, rendered in a headless compositor"
+depends = ["stage"]
+run = '''
+pin=$(jq -r '.mcpServers.quickshell.args as $a | $a[($a|index("--from"))+1]' .mcp.json)
+uv run --quiet --with "$pin" python test/qsmcp/check.py
+'''
+
+[tasks.stage]
+description = "Rebuild the Omarchy shell tree the UI checks boot"
+run = "./test/qsmcp/stage.sh"

@@ -1,0 +1,34 @@
+{
+  "config_dir": "stage/shell",
+  "entry": "shell.qml",
+  "env": {
+    "HOME": "${PROFILE_DIR}/stage/home",
+    "OMARCHY_PATH": "${PROFILE_DIR}/stage"
+  },
+  "backends": [
+    {
+      "name": "bluebubbles",
+      "argv": [
+        "node",
+        "${PROFILE_DIR}/../server.js"
+      ],
+      "ready": {
+        "log": "listening on http"
+      }
+    },
+    {
+      "name": "daemon",
+      "argv": [
+        "node",
+        "${PROFILE_DIR}/../../daemon/index.js"
+      ],
+      "ready": {
+        "socket": "${XDG_RUNTIME_DIR}/omaimsg.sock"
+      },
+      "env_out": {
+        "OMAIMSG_CONFIG": "${PROFILE_DIR}/daemon-config.json"
+      }
+    }
+  ],
+  "macros": []
+}

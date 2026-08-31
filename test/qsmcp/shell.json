@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "idle": {
+    "screensaver": 86400,
+    "lock": 86400
+  },
+  "bar": {
+    "position": "top",
+    "transparent": false,
+    "centerAnchor": "omarchy.clock",
+    "layout": {
+      "left": [],
+      "center": [{ "id": "omarchy.clock", "format": "dddd HH:mm" }],
+      "right": [{ "id": "io.omaimsg", "autostartDaemon": false }]
+    }
+  },
+  "plugins": []
+}

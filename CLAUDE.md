@@ -12,11 +12,20 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 
 ## Verification
 
-`node test/smoke.js` is the check for any daemon or protocol change: it boots the mock BlueBubbles server (`test/server.js`) plus the daemon and drives every protocol frame over the real Unix socket. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). A daemon change also needs `bun run bundle` re-run and the resulting `daemon/dist/omaimsg-daemon.cjs` committed — it's the daemon installed plugins actually run, so `OMAIMSG_DAEMON_ENTRY=daemon/dist/omaimsg-daemon.cjs node test/smoke.js` should stay green too (the bundle runs under plain `node`; bun is a dev-time build tool only). QML changes: `/usr/lib/qt6/bin/qmllint` (the bare `qmllint` on PATH is Qt5's and rejects valid QML6); import warnings about `qs.Ui`/`Quickshell` are expected outside the shell tree. `omarchy plugin validate .` at the repo root checks the manifest and plugin folder the way `omarchy plugin add` would see them (run with no `node_modules` present anywhere in the tree — bun's workspace linker gives `daemon/` and `test/` their own `node_modules` too, each full of symlinks into the root install, so root alone isn't enough; a real git clone has none of them, matching `.gitignore`'s tree-wide `node_modules/` pattern).
+`mise run test` is the check for any change: the daemon protocol suite, the same suite against the committed bundle, then the UI suite. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). `TESTING.md` is the full picture — suites, setup, the manual `qmllint` and `omarchy plugin validate` checks, and how the headless harness works; read it before changing how anything is tested.
+
+Working knowledge that bites:
+
+- A change under `daemon/` re-runs `bun run bundle` and commits `daemon/dist/omaimsg-daemon.cjs` in the same round. It's the daemon installed plugins actually run, so `test:bundle` fails without it.
+- UI checks address nodes by what they are (`moduleName === "io.omaimsg"`, the composer's `placeholderText`), never by child index — index paths move when Omarchy reorders the bar.
+- Keystrokes go through `wtype`, bracketed with `-s 300`. Sway drops events delivered before the virtual keyboard's keymap settles, and a bare `wtype j` then exits 0 having done nothing at all.
+- The quickshell-mcp pin lives in `.mcp.json` alone; the mise task reads it from there, so it cannot drift.
 
 ## Omarchy dev loop
 
-- Install is a real copy: `rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it).
+- Install is a real copy: `rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
+  --exclude .mcp.json --exclude .claude --exclude mise.toml --exclude /test/qsmcp/stage \
+  ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it).
 - Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate.
 - `omarchy-shell io.omaimsg toggle|open|close` drives the panel from scripts/keybindings (requires `OMARCHY_PATH=/usr/share/omarchy`).
 - Templates this code follows: Omarchy first-party plugins (`/usr/share/omarchy/shell/plugins/`, especially clipboard and agents) and `srineshr1/omarchy-whatsapp` for the daemon/socket architecture. `docs/research/` has the full background.
