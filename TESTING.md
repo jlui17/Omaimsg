@@ -77,8 +77,8 @@ move the moment Omarchy reorders the bar.
 
 `test/qsmcp/daemon-config.json` runs the daemon with a five-message page, because the fake server
 gives each chat 10 to 30 messages and the default page of 60 would swallow every thread whole,
-leaving nothing for the paging checks to page. It carries no `serverUrl`: `mock.sh` adds one for the
-port it took, and writes the result where the harness points `OMAIMSG_CONFIG`.
+leaving nothing for the paging checks to page. It carries no `serverUrl`: the fake server adds one for the
+port it took into the seeded copy the harness points `OMAIMSG_CONFIG` at.
 
 ## The harness
 
@@ -103,13 +103,14 @@ installed into `plugins/io.omaimsg`, and a fake `HOME` holding a one-widget bar 
 what makes the harness see the real components. `BarWidget.qml` and `Panel.qml` root on `BarWidget`
 and `Panel` from `qs.Ui`, which lives in `/usr/share/omarchy/shell`, so this repo has no entry point
 that runs on its own. `test/qsmcp/profile.json` then points the harness at the staged shell and
-starts two backends first: `test/qsmcp/mock.sh` and the real daemon, each gated on its own readiness
+starts two backends first: `test/server.js` and the real daemon, each gated on its own readiness
 signal.
 
-`mock.sh` wraps `test/server.js` on a port the kernel assigns rather than the fixed 3010, so a
-harness can run in each of two worktrees at once. Everything else a run owns is already private to
-it: the compositor, the daemon's socket (the harness gives each boot its own `XDG_RUNTIME_DIR`), and
-the stage tree.
+The fake server takes port `0`, so the kernel picks a free one and a harness can run in each of two
+worktrees at once. The profile seeds `daemon-config.json` into the harness's own work dir, and the
+server writes its port into that copy as `serverUrl` before it announces itself, which is the line
+the daemon's start waits on. Everything else a run owns is already private to it: the compositor,
+the daemon's socket (the harness gives each boot its own `XDG_RUNTIME_DIR`), and the stage tree.
 
 `stage.sh` also writes a `qmldir` into every directory `shell.qml` imports by relative path. Left to
 scan those directories itself, quickshell resolves them racily under the harness: a different type

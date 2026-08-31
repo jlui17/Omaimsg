@@ -9,11 +9,19 @@
     {
       "name": "bluebubbles",
       "argv": [
-        "${PROFILE_DIR}/mock.sh",
-        "${WORK}"
+        "node",
+        "${PROFILE_DIR}/../server.js",
+        "0"
       ],
       "ready": {
         "log": "listening on http"
+      },
+      "seed": {
+        "from": "${PROFILE_DIR}/daemon-config.json",
+        "to": "${WORK}/daemon-config.json"
+      },
+      "env_out": {
+        "OMAIMSG_MOCK_CONFIG": "${WORK}/daemon-config.json"
       }
     },
     {
