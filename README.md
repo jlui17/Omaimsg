@@ -20,6 +20,8 @@ To remove it: `omarchy plugin remove io.omaimsg`.
 
 ## Run against the fake BlueBubbles server
 
+Dev tooling is pinned in `mise.toml` (Node and Bun); `mise install` gets both.
+
 ```sh
 bun install
 node test/server.js                # fake BlueBubbles on :3010

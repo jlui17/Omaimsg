@@ -1,0 +1,5 @@
+[tools]
+node = "24"
+# Pinned because `bun run bundle` produces a committed artifact
+# (daemon/dist/omaimsg-daemon.cjs). Bump deliberately and re-run the bundle.
+bun = "1.4.0"
