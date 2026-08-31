@@ -44,7 +44,6 @@ Panel {
   readonly property bool threadLoaded: client ? client.activeThreadLoaded === true : false
   readonly property bool threadUnavailable: client ? client.activeThreadUnavailable === true : false
   readonly property int chatLimit: root.client ? root.client.chatLimit : 40
-  readonly property int messageLimit: root.setting("messageLimit", 60)
   // Relative timestamps are computed client-side, so a list this old is stale
   // only in the sense that a message could have arrived with the daemon's
   // socket down; the reconnect path zeroes the age for exactly that case.
@@ -357,7 +356,7 @@ Panel {
     root.view = "thread"
     root.focusSection = "messages"
     if (root.client) {
-      root.client.openChat(chat.guid, root.messageLimit)
+      root.client.openChat(chat.guid)
       root.client.markRead(chat.guid)
     }
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
@@ -426,6 +425,17 @@ Panel {
 
   onThreadRowsChanged: {
     if (root.syncThreadModel()) messageList.pinToNewest()
+    Qt.callLater(root.loadOlderIfAtStart)
+  }
+
+  // The thread is laid out newest-at-the-bottom, so `atYBeginning` is its
+  // oldest end: reaching it is what asks the daemon for the page before it.
+  // Also run after the rows change, because a thread too short to scroll sits
+  // at that end from the start and never crosses into it.
+  function loadOlderIfAtStart() {
+    if (root.view !== "thread" || !root.client) return
+    if (!messageList.atYBeginning) return
+    root.client.loadOlderMessages()
   }
 
   onVisibleChatsChanged: {
@@ -476,7 +486,7 @@ Panel {
     if (!root.client.chatsPending && root.client.chatsAgeMs() > root.chatsMaxAgeMs)
       root.client.requestChats(root.chatLimit)
     if (root.view !== "thread" || !root.activeGuid) return
-    root.client.reloadActiveMessages(root.messageLimit)
+    root.client.reloadActiveMessages()
     root.client.markRead(root.activeGuid)
     root.messageIndex = -1
     root.focusSection = "messages"
@@ -938,6 +948,11 @@ Panel {
             // the newest message is at a fixed position that owes nothing to the
             // content's height, so nothing an image does later can move it.
             verticalLayoutDirection: ListView.BottomToTop
+
+            // An older page is appended at the far (oldest) end, which extends
+            // the content upward without moving contentY, so the reader stays
+            // on the message they were looking at.
+            onAtYBeginningChanged: root.loadOlderIfAtStart()
 
             function pinToNewest() {
               if (root.messageIndex >= 0) return

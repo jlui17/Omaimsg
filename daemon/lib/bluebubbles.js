@@ -16,7 +16,15 @@
 //   default (DEFAULT_MESSAGE_CONFIG.includeChats = true in
 //   api/serializers/constants.ts), each message shaped like
 //   {guid, text, handle: {address}, chats: [...], attachments: [], isFromMe,
-//   dateCreated} where dateCreated is already unix milliseconds. Attachments
+//   dateCreated} where dateCreated is already unix milliseconds. Its `before`
+//   query param (and `/api/v1/message/query`'s body field of the same name) is
+//   unix milliseconds too, and both compile to `message.date <= :before` --
+//   INCLUSIVE (MessageRepository.applyMessageDateQuery in
+//   databases/imessage/index.ts). There is no exclusive form, and decrementing
+//   the cursor to fake one would make a message sharing that millisecond
+//   unreachable forever, so the boundary is left to the caller to dedupe.
+//   `limit` is applied after that filter, so a DESC page is the newest N at or
+//   before the cutoff. Attachments
 //   are only populated when the query carries `with=attachment`
 //   (chatRouter.ts getMessages: withAttachments); verified against the real
 //   server that omitting it yields no attachments on any message.
@@ -185,12 +193,14 @@ export class BlueBubblesSession {
   // empty. Measured on a real account: 11 of 40 such chats have their messages
   // recoverable by asking for the participant's handle instead. Only 1:1 chats
   // can be recovered this way -- a handle cannot stand in for a group's chat.
-  async messages(chatGuid, limit) {
-    const messages = await this.client.getChatMessages(chatGuid, limit, this.contacts)
+  // `beforeTs` pages backwards: omitted asks for the newest page, set asks for
+  // the page ending at that unix-ms point, which includes the point itself.
+  async messages(chatGuid, limit, beforeTs) {
+    const messages = await this.client.getChatMessages(chatGuid, limit, this.contacts, beforeTs)
     if (messages.length) return messages
     const address = this.soloParticipants.get(chatGuid)
     if (!address) return messages
-    return this.client.getMessagesByHandle(address, limit, this.contacts)
+    return this.client.getMessagesByHandle(address, limit, this.contacts, beforeTs)
   }
 
   async sendText({ chatGuid, text, tempGuid }) {
@@ -287,10 +297,10 @@ class BlueBubblesClient {
     return counts
   }
 
-  async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
+  async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX, beforeTs) {
     // Newest-first from the server; the protocol wants oldest-first.
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
-      query: { limit, sort: 'DESC', with: 'attachment' }
+      query: { limit, sort: 'DESC', with: 'attachment', before: beforeTs }
     })
     return data.map((message) => normalizeMessage(message, contactIndex)).reverse()
   }
@@ -298,12 +308,13 @@ class BlueBubblesClient {
   // No chat relation requested, deliberately: asking for it makes the server
   // inner-join chats, which is exactly what hides an unlinked message. The
   // handle table's address column is `id` in chat.db, not `address`.
-  async getMessagesByHandle(address, limit, contactIndex = EMPTY_CONTACT_INDEX) {
+  async getMessagesByHandle(address, limit, contactIndex = EMPTY_CONTACT_INDEX, beforeTs) {
     const data = await this._request('/api/v1/message/query', {
       method: 'POST',
       body: {
         limit,
         sort: 'DESC',
+        before: beforeTs,
         where: [{ statement: 'handle.id = :address', args: { address } }]
       }
     })

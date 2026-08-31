@@ -47,6 +47,12 @@ Item {
 
   property string activeChatGuid: ""
   property var activeMessages: []
+  // The thread an older-page request is in flight for, "" when none. Held as a
+  // guid rather than a bool so a reply for a thread the reader has since left
+  // cannot open the gate on the one they are in now. Exhaustion is per guid for
+  // the same reason: leaving a thread and coming back reads the same answer.
+  property string olderPendingGuid: ""
+  property var exhaustedThreads: ({})
 
   // Chat guid -> the thread as last known, so re-entering a chat visited this
   // session renders instantly instead of waiting on the daemon. Replaced
@@ -106,6 +112,9 @@ Item {
   // what makes the first open of a freshly started shell render populated.
   function onLinkEstablished() {
     if (!root.linkUp) return
+    // A request that was on the wire when the socket dropped will never be
+    // answered, and its gate would otherwise hold that thread's paging shut.
+    root.olderPendingGuid = ""
     root.refresh()
     root.requestChats()
   }
@@ -116,7 +125,22 @@ Item {
     root.chatsPending = true
     return true
   }
-  function loadMessages(chatGuid, limit) { return request({ t: "messages", chatGuid: chatGuid, limit: limit || 60 }) }
+  // No limit: the daemon sizes the page from its own config and the panel pages
+  // backwards from there (docs/daemon-protocol.md).
+  function loadMessages(chatGuid) { return request({ t: "messages", chatGuid: chatGuid }) }
+
+  // Callers fire this from a scroll position, so it has to absorb being asked
+  // repeatedly.
+  function loadOlderMessages() {
+    var guid = root.activeChatGuid
+    if (!guid.length || root.olderPendingGuid === guid || root.exhaustedThreads[guid] === true) return false
+    if (!root.activeMessages.length) return false
+    var oldest = root.activeMessages[0]
+    if (!oldest || !oldest.ts) return false
+    if (!request({ t: "olderMessages", chatGuid: guid, beforeTs: oldest.ts })) return false
+    root.olderPendingGuid = guid
+    return true
+  }
 
   // The daemon owns unread counts but sends no frame in reply to `read`, so the
   // badge would stay stale until the next push. Clear the local mirror too.
@@ -170,13 +194,13 @@ Item {
     return request({ t: "preview", guid: guid })
   }
 
-  function openChat(chatGuid, limit) {
+  function openChat(chatGuid) {
     if (!chatGuid || !chatGuid.length) return false
     root.activeChatGuid = chatGuid
     // A chat seen this session renders from cache while the daemon's page is in
     // flight; an unvisited one shows nothing rather than the last chat's rows.
     root.activeMessages = root.threadCache[chatGuid] || []
-    return root.loadMessages(chatGuid, limit)
+    return root.loadMessages(chatGuid)
   }
 
   // activeMessages survives the close: the per-guid cache is what the next
@@ -187,9 +211,9 @@ Item {
 
   // Re-requests the open thread without emptying it, so a reopened panel keeps
   // showing the thread it had until the fresh page lands.
-  function reloadActiveMessages(limit) {
+  function reloadActiveMessages() {
     if (!root.activeChatGuid.length) return false
-    return root.loadMessages(root.activeChatGuid, limit)
+    return root.loadMessages(root.activeChatGuid)
   }
 
   // False when the frame could not be written; the optimistic row is appended
@@ -231,6 +255,31 @@ Item {
       out.push(tempId ? Object.assign({}, row, { tempId: tempId }) : row)
     }
     return out
+  }
+
+  function setExhausted(chatGuid, exhausted) {
+    if (!chatGuid.length) return
+    var next = Object.assign({}, root.exhaustedThreads)
+    if (exhausted) next[chatGuid] = true
+    else delete next[chatGuid]
+    root.exhaustedThreads = next
+  }
+
+  // Additive, unlike a `messages` frame: the older page goes in front of what is
+  // already on screen. Deduped by guid because the server's cut is inclusive, so
+  // the cursor message and anything sharing its millisecond come back with the
+  // page. Returns whether anything new landed.
+  function prependOlderMessages(older) {
+    if (!older.length) return false
+    var known = {}
+    for (var i = 0; i < root.activeMessages.length; i++) known[root.activeMessages[i].guid] = true
+    var out = []
+    for (var n = 0; n < older.length; n++) {
+      if (!known[older[n].guid]) out.push(older[n])
+    }
+    if (!out.length) return false
+    root.setActiveMessages(out.concat(root.activeMessages))
+    return true
   }
 
   // The cache is written on every mutation, not only on load, so an optimistic
@@ -413,9 +462,25 @@ Item {
         var unavailable = Object.assign({}, root.unavailableThreads)
         unavailable[frame.chatGuid || ""] = frame.unavailable === true
         root.unavailableThreads = unavailable
+        // This frame replaces the thread, so the older pages paged in behind it
+        // are gone and the thread can be paged back through again.
+        root.setExhausted(frame.chatGuid || "", false)
         if ((frame.chatGuid || "") === root.activeChatGuid) {
           root.setActiveMessages(root.withKnownTempIds(frame.messages || []))
         }
+        break
+
+      case "olderMessages":
+        if ((frame.chatGuid || "") === root.olderPendingGuid) root.olderPendingGuid = ""
+        if ((frame.chatGuid || "") !== root.activeChatGuid) break
+        // Prepend before reading `exhausted`, never short-circuit past it: an
+        // exhausted page still carries the cursor message and anything sharing
+        // its millisecond, which is the whole point of the inclusive cut.
+        var added = root.prependOlderMessages(frame.messages || [])
+        // A page that adds nothing is the end of the road even when the daemon
+        // says otherwise: the next request would carry the same cursor and so
+        // fetch the same page, and nothing would move the view off the top.
+        if (frame.exhausted === true || !added) root.setExhausted(frame.chatGuid || "", true)
         break
 
       case "message":
@@ -447,6 +512,11 @@ Item {
         break
 
       case "error":
+        // Scoped by guid like the attachment errors below: an error for a
+        // thread the reader has left must not open the gate on the one they
+        // are in now.
+        if (frame.for === "olderMessages" && (frame.chatGuid || "") === root.olderPendingGuid)
+          root.olderPendingGuid = ""
         // A failed download must clear its pending flag, or the image can
         // never be re-requested for the rest of the session.
         if (frame.for === "attachment") root.settleAttachment(frame.guid || "", "")

@@ -79,7 +79,7 @@ export const SHORTCODE_TEST_CHAT = { guid: 'SMS;-;753310', rawName: '753310', wr
 // Unnamed group: first names of resolved members, raw handle for the rest.
 export const UNNAMED_GROUP_TEST_CHAT = { guid: 'iMessage;+;chat1122334455', expectedName: 'Maya & +15551230004' }
 
-// The seeded image-only message (chat 0, third message), with the bytes the
+// The seeded image-only message (chat 0, near its newest end), with the bytes the
 // mock's download route serves for it: a 1x1 PNG, exported so smoke.js can
 // byte-compare what the daemon wrote to disk.
 export const ATTACHMENT_TEST_CHAT = CHAT_DEFS[0].guid
@@ -182,7 +182,8 @@ export function buildStore() {
     for (let i = 0; i < count; i++) {
       const fromMe = Math.random() < 0.45
       const ts = now - (count - i) * 5 * 60 * 1000 // 5 min apart, oldest first
-      const attachmentOnly = i === 2 && def.guid === CHAT_DEFS[0].guid
+      // Near the newest end so it lands inside the page the daemon serves.
+      const attachmentOnly = i === count - 2 && def.guid === CHAT_DEFS[0].guid
       list.push(buildMessage({ chat, text: pick(BANK), fromMe, ts, attachmentOnly }))
     }
 

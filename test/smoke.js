@@ -14,6 +14,9 @@ const repoRoot = path.resolve(__dirname, '..')
 const daemonEntry = process.env.OMAIMSG_DAEMON_ENTRY || 'daemon/index.js'
 const PORT = 39000 + (process.pid % 500)
 const PASSWORD = 'testpass'
+// Well under every canned chat's 10-30 messages, so a thread always has pages
+// behind its first one to walk back through.
+const CACHE_PAGE_SIZE = 5
 const configPath = path.join(os.tmpdir(), `omaimsg-smoke-config-${process.pid}.json`)
 const socketPath = path.join(os.tmpdir(), `omaimsg-smoke-${process.pid}.sock`)
 const stateHome = path.join(os.tmpdir(), `omaimsg-smoke-state-${process.pid}`)
@@ -260,7 +263,8 @@ async function main() {
   writeFileSync(configPath, JSON.stringify({
     serverUrl: `http://localhost:${PORT}`,
     password: PASSWORD,
-    method: 'apple-script'
+    method: 'apple-script',
+    cache: { threads: 30, messagesPerThread: CACHE_PAGE_SIZE }
   }))
 
   trackSpawn(
@@ -433,7 +437,7 @@ async function main() {
   await settledRead(client, orderTarget)
 
   const chatGuid = chatsFrame.chats[0].guid
-  client.send({ t: 'messages', chatGuid, limit: 60 })
+  client.send({ t: 'messages', chatGuid })
   const messagesFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   report('messages -> non-empty list', Array.isArray(messagesFrame.messages) && messagesFrame.messages.length > 0)
 
@@ -441,7 +445,7 @@ async function main() {
   // answer well inside the fetch the daemon is simultaneously making.
   await mockControl('message-delay', { ms: 700 })
   const warmStart = Date.now()
-  client.send({ t: 'messages', chatGuid, limit: 60 })
+  client.send({ t: 'messages', chatGuid })
   await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   const warmMs = Date.now() - warmStart
   report(
@@ -454,7 +458,7 @@ async function main() {
   // reach the client, as a second frame after the cached one.
   const staleMarker = `omaimsg-smoke-revalidate-${process.pid}`
   await mockControl('silent-message', { chatGuid, text: staleMarker })
-  client.send({ t: 'messages', chatGuid, limit: 60 })
+  client.send({ t: 'messages', chatGuid })
   const staleFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === chatGuid)
   report(
     'cached reply is served before the server change is known',
@@ -501,7 +505,7 @@ async function main() {
   await mockControl('chat-delay', { ms: 0 })
 
   // Attachments: chat 0 seeds one image-only message (test/data.js).
-  client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT, limit: 60 })
+  client.send({ t: 'messages', chatGuid: ATTACHMENT_TEST_CHAT })
   const attachmentChatFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === ATTACHMENT_TEST_CHAT)
   const attachmentMessage = attachmentChatFrame.messages.find((m) => m.attachments?.length)
   report(
@@ -750,7 +754,7 @@ async function main() {
 
   // A chat whose messages chat.db never linked to it: the chat-scoped route
   // serves nothing, and only the handle-scoped fallback reaches them.
-  client.send({ t: 'messages', chatGuid: ORPHANED_TEST.guid, limit: 60 })
+  client.send({ t: 'messages', chatGuid: ORPHANED_TEST.guid })
   const orphanFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === ORPHANED_TEST.guid)
   report(
     'messages -> a chat with no chat-linked messages is recovered by handle',
@@ -758,12 +762,89 @@ async function main() {
     `got ${(orphanFrame.messages || []).length} messages, unavailable=${orphanFrame.unavailable}`
   )
 
-  client.send({ t: 'messages', chatGuid: UNREACHABLE_TEST.guid, limit: 60 })
+  client.send({ t: 'messages', chatGuid: UNREACHABLE_TEST.guid })
   const unreachableFrame = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === UNREACHABLE_TEST.guid)
   report(
     'messages -> a group the fallback cannot reach is reported unavailable',
     (unreachableFrame.messages || []).length === 0 && unreachableFrame.unavailable === true,
     JSON.stringify({ messages: (unreachableFrame.messages || []).length, unavailable: unreachableFrame.unavailable })
+  )
+
+  // Thread paging: the daemon sizes the page from its own config, and the panel
+  // walks backwards from it. NEVER_TRACKED_TEST is a chat-linked thread, so the
+  // chat-scoped route answers it directly; every assertion below is relative to
+  // the pages this walk itself received, so a push landing at the newest end
+  // mid-walk cannot move them.
+  const pageChat = NEVER_TRACKED_TEST.guid
+  client.send({ t: 'messages', chatGuid: pageChat })
+  const firstPage = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === pageChat)
+  report(
+    'messages -> the daemon serves a page sized from its own config',
+    (firstPage.messages || []).length === CACHE_PAGE_SIZE,
+    `got ${(firstPage.messages || []).length}, configured ${CACHE_PAGE_SIZE}`
+  )
+
+  const seenGuids = new Set(firstPage.messages.map((m) => m.guid))
+  let cursor = firstPage.messages[0].ts
+  let olderPages = 0
+  let overlapOnlyAtCursor = true
+  let oldestFirst = true
+  let endFrame = null
+  // Bounded: no canned chat holds more than a handful of pages, so a walk that
+  // has not reached the start by here is a daemon that never reports it.
+  for (let step = 0; step < 12; step += 1) {
+    client.send({ t: 'olderMessages', chatGuid: pageChat, beforeTs: cursor })
+    const frame = await client.waitFor((f) => f.t === 'olderMessages' && f.chatGuid === pageChat)
+    const page = frame.messages || []
+    // The server's cut is inclusive, so the cursor message comes back with
+    // every page; running out of anything STRICTLY older is what ends the walk.
+    // Whether the daemon also says so is the assertion below, so a daemon that
+    // never flags exhaustion fails here rather than running the loop out.
+    if (!page.some((m) => m.ts < cursor)) {
+      endFrame = frame
+      break
+    }
+    olderPages += 1
+    // Anything the thread already held may only be the inclusive boundary
+    // itself; a repeat from further back would mean the cursor never moved.
+    if (page.some((m) => seenGuids.has(m.guid) && m.ts !== cursor)) overlapOnlyAtCursor = false
+    if (page.some((m, i) => i > 0 && m.ts < page[i - 1].ts)) oldestFirst = false
+    for (const message of page) seenGuids.add(message.guid)
+    cursor = page[0].ts
+  }
+
+  report('olderMessages -> the walk pages back through more than the first page', olderPages > 0, `${olderPages} older pages`)
+  report('olderMessages -> pages repeat nothing but the inclusive cursor itself', overlapOnlyAtCursor)
+  report('olderMessages -> pages arrive oldest-first, like a messages frame', oldestFirst)
+  report(
+    'olderMessages -> a thread with nothing older reports exhausted, so the panel can stop asking',
+    endFrame !== null && endFrame.exhausted === true,
+    JSON.stringify(endFrame)
+  )
+  report(
+    'olderMessages -> the exhausted page still carries the cursor message, so nothing sharing its ms is lost',
+    endFrame !== null && (endFrame.messages || []).some((m) => m.ts === cursor),
+    JSON.stringify(endFrame)
+  )
+
+  // A cursor-less request must be refused, not answered with the newest page:
+  // the panel would then prepend the page it already has.
+  client.send({ t: 'olderMessages', chatGuid: pageChat })
+  let missingCursor = null
+  try {
+    missingCursor = await client.waitFor((f) => f.t === 'error' && f.for === 'olderMessages', 2000)
+  } catch {
+    // eslint-disable-line no-empty
+  }
+  report(
+    'olderMessages without a cursor -> error',
+    missingCursor !== null && typeof missingCursor.message === 'string' && missingCursor.message.length > 0,
+    JSON.stringify(missingCursor)
+  )
+  report(
+    'olderMessages error carries its chatGuid, so a client clears the gate for that thread only',
+    missingCursor !== null && missingCursor.chatGuid === pageChat,
+    JSON.stringify(missingCursor)
   )
 
   client.send({ t: 'ping' })

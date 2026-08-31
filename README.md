@@ -42,6 +42,8 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 { "serverUrl": "http://<mac-ip>:1234", "password": "<bluebubbles server password>" }
 ```
 
+Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the daemon holds in memory, and `messagesPerThread` is also the page size it serves a thread in — the panel pages further back by scrolling to the top (`docs/daemon-protocol.md`).
+
 Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon.service` if installed, else the bundled fallback `daemon/dist/omaimsg-daemon.cjs`, `setsid node <plugin-dir>/daemon/dist/omaimsg-daemon.cjs`). Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
 
 The bundle is committed (`daemon/dist/omaimsg-daemon.cjs`, built with `bun run bundle`) because a plugin installed via `omarchy plugin add` is a plain git clone with no build step and no `node_modules`. Any change to `daemon/` must re-run `bun run bundle` and commit the result in the same round.

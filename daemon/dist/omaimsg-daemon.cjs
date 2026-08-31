@@ -4063,6 +4063,10 @@ var logger = {
 
 // daemon/lib/config.js
 var DEFAULT_METHOD = "apple-script";
+function positiveInt(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
 function loadConfig() {
   let raw;
   try {
@@ -4086,7 +4090,11 @@ function loadConfig() {
     ok: true,
     serverUrl: String(parsed.serverUrl).replace(/\/+$/, ""),
     password: String(parsed.password),
-    method: parsed.method === "private-api" ? "private-api" : DEFAULT_METHOD
+    method: parsed.method === "private-api" ? "private-api" : DEFAULT_METHOD,
+    cache: {
+      threads: positiveInt(parsed.cache?.threads),
+      pageSize: positiveInt(parsed.cache?.messagesPerThread)
+    }
   };
 }
 function logConfigOutcome(config) {
@@ -4270,11 +4278,10 @@ class PinStore {
 }
 
 // daemon/lib/store.js
-var MAX_CACHED_MESSAGES = 60;
-var MAX_CACHED_THREADS = 30;
-
 class Store {
-  constructor() {
+  constructor({ threads = 30, pageSize = 60 } = {}) {
+    this.maxThreads = threads;
+    this.pageSize = pageSize;
     this.chats = new Map;
     this.threads = new Map;
     this.pins = new PinStore;
@@ -4290,13 +4297,13 @@ class Store {
     return thread;
   }
   cacheThread(chatGuid, messages) {
-    const page = messages.slice(-MAX_CACHED_MESSAGES);
+    const page = messages.slice(-this.pageSize);
     const previous = this.threads.get(chatGuid);
     const changed = !previous || JSON.stringify(previous) !== JSON.stringify(page);
     this.threads.delete(chatGuid);
     this.threads.set(chatGuid, page);
     for (const guid of this.threads.keys()) {
-      if (this.threads.size <= MAX_CACHED_THREADS)
+      if (this.threads.size <= this.maxThreads)
         break;
       this.threads.delete(guid);
     }
@@ -4308,7 +4315,7 @@ class Store {
       return;
     if (message.guid && thread.some((m) => m.guid === message.guid))
       return;
-    this.threads.set(chatGuid, [...thread, message].slice(-MAX_CACHED_MESSAGES));
+    this.threads.set(chatGuid, [...thread, message].slice(-this.pageSize));
   }
   setPinned(chatGuid, pinned) {
     this.pins.set(chatGuid, pinned);
@@ -7260,14 +7267,14 @@ class BlueBubblesSession {
   async unreadCounts() {
     return this.client.unreadCounts();
   }
-  async messages(chatGuid, limit) {
-    const messages = await this.client.getChatMessages(chatGuid, limit, this.contacts);
+  async messages(chatGuid, limit, beforeTs) {
+    const messages = await this.client.getChatMessages(chatGuid, limit, this.contacts, beforeTs);
     if (messages.length)
       return messages;
     const address = this.soloParticipants.get(chatGuid);
     if (!address)
       return messages;
-    return this.client.getMessagesByHandle(address, limit, this.contacts);
+    return this.client.getMessagesByHandle(address, limit, this.contacts, beforeTs);
   }
   async sendText({ chatGuid, text, tempGuid }) {
     return this.client.sendText({ chatGuid, text, tempGuid });
@@ -7349,18 +7356,19 @@ class BlueBubblesClient {
     }
     return counts;
   }
-  async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX) {
+  async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX, beforeTs) {
     const data = await this._request(`/api/v1/chat/${encodeURIComponent(chatGuid)}/message`, {
-      query: { limit, sort: "DESC", with: "attachment" }
+      query: { limit, sort: "DESC", with: "attachment", before: beforeTs }
     });
     return data.map((message) => normalizeMessage(message, contactIndex)).reverse();
   }
-  async getMessagesByHandle(address, limit, contactIndex = EMPTY_CONTACT_INDEX) {
+  async getMessagesByHandle(address, limit, contactIndex = EMPTY_CONTACT_INDEX, beforeTs) {
     const data = await this._request("/api/v1/message/query", {
       method: "POST",
       body: {
         limit,
         sort: "DESC",
+        before: beforeTs,
         where: [{ statement: "handle.id = :address", args: { address } }]
       }
     });
@@ -7462,7 +7470,7 @@ function embeddedChat(bbMessage) {
 var config = loadConfig();
 logConfigOutcome(config);
 var bus = new Bus(socketPath);
-var store = new Store;
+var store = new Store(config.cache);
 var connection = config.ok ? "connecting" : "error";
 var lastError = config.ok ? "" : config.error;
 function state() {
@@ -7578,7 +7586,7 @@ async function handleCommand(payload, reply) {
       if (served)
         reply({ t: "messages", chatGuid: payload.chatGuid, messages: served, unavailable: served.length === 0 });
       try {
-        const messages = await session.messages(payload.chatGuid, payload.limit || 60);
+        const messages = await session.messages(payload.chatGuid, store.pageSize);
         const changed = store.cacheThread(payload.chatGuid, messages);
         if (!served || changed)
           reply({ t: "messages", chatGuid: payload.chatGuid, messages, unavailable: messages.length === 0 });
@@ -7587,6 +7595,23 @@ async function handleCommand(payload, reply) {
           logger.warn("messages: revalidation failed, cached page stands", { chatGuid: payload.chatGuid, err: err.message });
         else
           reply({ t: "error", for: "messages", message: err.message });
+      }
+      return;
+    case "olderMessages":
+      if (!config.ok) {
+        reply({ t: "error", for: "olderMessages", chatGuid: payload.chatGuid || "", message: lastError });
+        return;
+      }
+      if (!payload.chatGuid || !payload.beforeTs) {
+        reply({ t: "error", for: "olderMessages", chatGuid: payload.chatGuid || "", message: "chatGuid and beforeTs required" });
+        return;
+      }
+      try {
+        const older = await session.messages(payload.chatGuid, store.pageSize, payload.beforeTs);
+        const exhausted = !older.some((message) => message.ts < payload.beforeTs);
+        reply({ t: "olderMessages", chatGuid: payload.chatGuid, messages: older, exhausted });
+      } catch (err) {
+        reply({ t: "error", for: "olderMessages", chatGuid: payload.chatGuid, message: err.message });
       }
       return;
     case "send":

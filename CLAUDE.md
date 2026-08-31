@@ -8,6 +8,7 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 - The daemon never trusts BlueBubbles' chat ranking: `/api/v1/chat/query`'s sort/paging silently drops merged `any;-;` chats (verified against a real server; see the header comment in `daemon/lib/bluebubbles.js`). It always paginates the full chat list and sorts locally (pinned first, then `lastMessage.ts` descending, nulls last).
 - Contact matching mirrors BlueBubbles' own suffix algorithm but with a ≥7-digit floor for fuzzy matches — anything shorter lets SMS shortcodes claim contacts. Emails match exactly only.
 - Sends default to BlueBubbles' `apple-script` method (no Private API/SIP setup on the Mac). `~/.config/omaimsg/config.json` holds `serverUrl`/`password` and is never committed.
+- Thread paging is the daemon's: it sizes a page from `cache.messagesPerThread`, which is also the tail it caches, so the two cannot disagree. The panel asks for a thread and then for the page before it (`olderMessages`); the manifest has no message-count setting.
 
 ## Verification
 

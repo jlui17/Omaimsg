@@ -1,19 +1,18 @@
 import { PinStore } from './pins.js'
 
-// A cached page is exactly what the panel renders (its `messageLimit`, 60 by
-// default), so a shorter cap would make every thread open re-fetch to fill the
-// view. 30 chats is past what one sitting opens; raise it only if a session
-// routinely cycles through more than that, since every entry pins a full page
-// in memory for the daemon's lifetime.
-const MAX_CACHED_MESSAGES = 60
-const MAX_CACHED_THREADS = 30
-
 // Daemon-owned chat cache and unread counts. Unread is not persisted: the Mac
 // is the source of truth, so a fresh daemon seeds from it (see
 // bluebubbles.js's unreadCounts) and then tracks live -- +1 per inbound
 // message, cleared by `read` or by the server reporting the chat read.
 export class Store {
-  constructor() {
+  // `pageSize` is the served page and the cached tail at once -- see
+  // docs/daemon-protocol.md for why they are one number. 30 threads is past
+  // what one sitting opens; raise it only if a session routinely cycles through
+  // more, since every entry pins a full page in memory for the daemon's
+  // lifetime.
+  constructor({ threads = 30, pageSize = 60 } = {}) {
+    this.maxThreads = threads
+    this.pageSize = pageSize
     this.chats = new Map()
     this.threads = new Map()
     this.pins = new PinStore()
@@ -34,13 +33,13 @@ export class Store {
   // True when the page is new information, which is what tells the caller
   // whether a client already served from cache still needs a fresh frame.
   cacheThread(chatGuid, messages) {
-    const page = messages.slice(-MAX_CACHED_MESSAGES)
+    const page = messages.slice(-this.pageSize)
     const previous = this.threads.get(chatGuid)
     const changed = !previous || JSON.stringify(previous) !== JSON.stringify(page)
     this.threads.delete(chatGuid)
     this.threads.set(chatGuid, page)
     for (const guid of this.threads.keys()) {
-      if (this.threads.size <= MAX_CACHED_THREADS) break
+      if (this.threads.size <= this.maxThreads) break
       this.threads.delete(guid)
     }
     return changed
@@ -53,7 +52,7 @@ export class Store {
     const thread = this.threads.get(chatGuid)
     if (!thread) return
     if (message.guid && thread.some((m) => m.guid === message.guid)) return
-    this.threads.set(chatGuid, [...thread, message].slice(-MAX_CACHED_MESSAGES))
+    this.threads.set(chatGuid, [...thread, message].slice(-this.pageSize))
   }
 
   setPinned(chatGuid, pinned) {

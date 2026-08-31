@@ -102,11 +102,16 @@ const server = createServer(async (req, res) => {
         return
       }
       const limit = Number(url.searchParams.get('limit')) || 100
+      const before = url.searchParams.has('before') ? Number(url.searchParams.get('before')) : null
       const newestFirst = url.searchParams.get('sort') !== 'ASC'
       // Like the real chatRouter.getMessages: attachments are serialized only
       // when the query asks for them via `with=attachment`.
       const withAttachments = (url.searchParams.get('with') || '').split(',').some((w) => w === 'attachment' || w === 'attachments')
-      const sorted = newestFirst ? [...list].reverse() : list
+      // `before` is inclusive on the real server (MessageRepository's
+      // `message.date <= :before`), and the filter runs before the limit, so a
+      // DESC page is the newest N at or before the cutoff.
+      const cut = before === null ? list : list.filter((m) => m.dateCreated <= before)
+      const sorted = newestFirst ? [...cut].reverse() : cut
       const page = sorted.slice(0, limit).map((m) => (withAttachments ? m : { ...m, attachments: [] }))
       setTimeout(() => sendJson(res, 200, envelope(page)), messageFetchDelayMs)
       return
@@ -204,7 +209,10 @@ const server = createServer(async (req, res) => {
       const matched = address
         ? all.filter((m) => !m.isFromMe && m.handle?.address === address)
         : []
-      const ordered = [...matched].reverse().slice(0, body.limit || 100)
+      const cut = body.before === undefined || body.before === null
+        ? matched
+        : matched.filter((m) => m.dateCreated <= body.before)
+      const ordered = [...cut].reverse().slice(0, body.limit || 100)
       sendJson(res, 200, envelope(ordered))
       return
     }

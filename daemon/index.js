@@ -12,7 +12,7 @@ const config = loadConfig()
 logConfigOutcome(config)
 
 const bus = new Bus(socketPath)
-const store = new Store()
+const store = new Store(config.cache)
 
 let connection = config.ok ? 'connecting' : 'error'
 let lastError = config.ok ? '' : config.error
@@ -173,7 +173,7 @@ async function handleCommand(payload, reply) {
       const served = store.cachedThread(payload.chatGuid)
       if (served) reply({ t: 'messages', chatGuid: payload.chatGuid, messages: served, unavailable: served.length === 0 })
       try {
-        const messages = await session.messages(payload.chatGuid, payload.limit || 60)
+        const messages = await session.messages(payload.chatGuid, store.pageSize)
         const changed = store.cacheThread(payload.chatGuid, messages)
         if (!served || changed) reply({ t: 'messages', chatGuid: payload.chatGuid, messages, unavailable: messages.length === 0 })
       } catch (err) {
@@ -182,6 +182,33 @@ async function handleCommand(payload, reply) {
         // BlueBubbles outage.
         if (served) logger.warn('messages: revalidation failed, cached page stands', { chatGuid: payload.chatGuid, err: err.message })
         else reply({ t: 'error', for: 'messages', message: err.message })
+      }
+      return
+
+    case 'olderMessages':
+      // Every failure here carries the chatGuid, the same reason an attachment
+      // error carries its guid: the client gates paging per thread and has to
+      // clear that gate for exactly the thread that failed.
+      if (!config.ok) {
+        reply({ t: 'error', for: 'olderMessages', chatGuid: payload.chatGuid || '', message: lastError })
+        return
+      }
+      if (!payload.chatGuid || !payload.beforeTs) {
+        reply({ t: 'error', for: 'olderMessages', chatGuid: payload.chatGuid || '', message: 'chatGuid and beforeTs required' })
+        return
+      }
+      // Not cached and not cache-first, unlike `messages`: the cache is the
+      // thread's newest page, so nothing behind it is ever a hit, and there is
+      // no stale answer to serve ahead of the fetch.
+      try {
+        const older = await session.messages(payload.chatGuid, store.pageSize, payload.beforeTs)
+        // The server's cut is inclusive, so a page at the start of a thread
+        // still carries the cursor message back. Exhaustion is therefore
+        // "nothing strictly older came back", not "nothing came back".
+        const exhausted = !older.some((message) => message.ts < payload.beforeTs)
+        reply({ t: 'olderMessages', chatGuid: payload.chatGuid, messages: older, exhausted })
+      } catch (err) {
+        reply({ t: 'error', for: 'olderMessages', chatGuid: payload.chatGuid, message: err.message })
       }
       return
 

@@ -4,6 +4,13 @@ import { logger } from './logger.js'
 
 const DEFAULT_METHOD = 'apple-script'
 
+// Absent or unusable cache settings are left undefined rather than defaulted
+// here, so Store stays the single place the numbers live.
+function positiveInt(value) {
+  const n = Number(value)
+  return Number.isInteger(n) && n > 0 ? n : undefined
+}
+
 // No config file is a valid, runnable state: the daemon still comes up and
 // listens on the socket, it just reports connection:"error" until one exists.
 export function loadConfig() {
@@ -32,7 +39,11 @@ export function loadConfig() {
     ok: true,
     serverUrl: String(parsed.serverUrl).replace(/\/+$/, ''),
     password: String(parsed.password),
-    method: parsed.method === 'private-api' ? 'private-api' : DEFAULT_METHOD
+    method: parsed.method === 'private-api' ? 'private-api' : DEFAULT_METHOD,
+    cache: {
+      threads: positiveInt(parsed.cache?.threads),
+      pageSize: positiveInt(parsed.cache?.messagesPerThread)
+    }
   }
 }
 
