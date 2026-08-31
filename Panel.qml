@@ -152,6 +152,40 @@ Panel {
     return ms ? Qt.formatTime(new Date(ms), "HH:mm") : ""
   }
 
+  // The bubble body is styled text so links can be tags, which means the
+  // message has to be escaped rather than handed over as-is; a message
+  // containing "<3" would otherwise lose the "<3".
+  function escapeMarkup(text) {
+    return text.replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>")
+  }
+
+  function linkify(text) {
+    var pattern = /\b(?:https?:\/\/|www\.)[^\s<>"]+/gi
+    var out = ""
+    var last = 0
+    var match
+    while ((match = pattern.exec(text)) !== null) {
+      // Sentence punctuation that trails a URL is the sentence's, not the
+      // URL's. Closing brackets are left alone: they are as often part of the
+      // link (wiki titles) as around it.
+      var url = match[0].replace(/[.,;:!?'"]+$/, "")
+      var start = match.index
+      out += root.escapeMarkup(text.slice(last, start))
+      // The href is not escaped: Qt resolves entities in the body but not in
+      // an attribute, so an escaped "&" would open a URL with a literal
+      // "&amp;" in it. The pattern bars the quote and angle brackets, which
+      // are the only raw characters that could end the attribute early.
+      out += '<a href="' + (url.indexOf("www.") === 0 ? "https://" + url : url) + '">'
+        + root.escapeMarkup(url) + '</a>'
+      last = start + url.length
+      pattern.lastIndex = last
+    }
+    return out + root.escapeMarkup(text.slice(last))
+  }
+
   function badgeText(count) {
     var n = Math.max(0, count | 0)
     return n > 99 ? "99+" : String(n)
@@ -1061,13 +1095,25 @@ Panel {
 
                   Text {
                     id: bodyLabel
-                    visible: text.length > 0
+                    visible: bubbleRow.body.length > 0
                     width: Math.min(implicitWidth, bubbleRow.maxInner)
-                    text: bubbleRow.body
+                    text: root.linkify(bubbleRow.body)
+                    textFormat: Text.StyledText
                     color: root.foreground
+                    linkColor: root.accent
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
                     wrapMode: Text.Wrap
+                    onLinkActivated: function (link) { Qt.openUrlExternally(link) }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      acceptedButtons: Qt.NoButton
+                      hoverEnabled: true
+                      cursorShape: bodyLabel.hoveredLink.length > 0
+                        ? Qt.PointingHandCursor
+                        : Qt.ArrowCursor
+                    }
                   }
 
                   Text {
