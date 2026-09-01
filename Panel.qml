@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import qs.Commons
 import qs.Ui
 
@@ -297,6 +298,7 @@ Panel {
       // (docs/daemon-protocol.md); when the image itself is rendered here, that
       // placeholder is noise.
       body: text === "[attachment]" && images.length > 0 ? "" : text,
+      optimistic: message.optimistic === true,
       images: JSON.stringify(images),
       ts: message.ts || 0,
       pending: message.pending === true,
@@ -349,6 +351,9 @@ Panel {
     if (!row) return
     var images = JSON.parse(row.images)
     if (!images.length) return
+    // Nothing to open yet on a row still waiting for its echo: its attachment
+    // is keyed by the send's tempId, which no BlueBubbles guid matches.
+    if (row.optimistic) return
     root.client.requestPreview(images[0].guid)
   }
 
@@ -483,6 +488,41 @@ Panel {
     root.cursorFollowGuid = ""
   }
 
+  // The one door to the picker, so pressing `a` and clicking the paperclip
+  // answer a dead daemon the same way rather than one of them opening a dialog
+  // whose every pick would fail.
+  //
+  // The panel steps aside for the pick and comes back when it resolves. It has
+  // to: this panel is a full-screen layer-shell surface on the overlay layer
+  // whose whole area dismisses it on click, and a file dialog is an ordinary
+  // window, which Wayland stacks *below* that layer. Left open, the panel eats
+  // every click aimed at the dialog and closes itself instead. Reopening
+  // restores the thread, which survives because closing the panel is not
+  // leaving the chat.
+  function pickImages() {
+    if (!root.connected) {
+      root.statusLine = "Not connected"
+      return
+    }
+    root.close()
+    imagePicker.open()
+  }
+
+  // One send per file: BlueBubbles takes one attachment per request, and a
+  // file the daemon refuses must not take the rest of the pick down with it.
+  function sendPickedImages(urls) {
+    if (!root.client) return
+    for (var i = 0; i < urls.length; i++) {
+      // A picked name with a space arrives percent-encoded in the file URL,
+      // and the daemon opens the path literally.
+      var filePath = decodeURIComponent(String(urls[i]).replace(/^file:\/\//, ""))
+      if (root.client.sendImage(filePath)) continue
+      root.statusLine = "Not connected"
+      return
+    }
+    root.statusLine = ""
+  }
+
   function focusComposer() {
     root.focusSection = "composer"
     composer.forceActiveFocus()
@@ -552,6 +592,20 @@ Panel {
     }
   }
 
+  FileDialog {
+    id: imagePicker
+    title: "Send images"
+    fileMode: FileDialog.OpenFiles
+    nameFilters: ["Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif *.bmp *.tif *.tiff)"]
+    // Reopened on both outcomes: a cancelled pick must not leave the reader
+    // staring at the bar wondering where their thread went.
+    onAccepted: {
+      root.open()
+      root.sendPickedImages(imagePicker.selectedFiles)
+    }
+    onRejected: root.open()
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -608,6 +662,7 @@ Panel {
       onTextKey: function (text) {
         if (root.view === "thread") {
           if (text === "i") root.focusComposer()
+          else if (text === "a") root.pickImages()
           return
         }
         if (text === "p") root.togglePin(root.chatAt(root.cursorIndex))
@@ -1216,18 +1271,43 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
-          TextField {
-            id: composer
+          Row {
+            id: composerRow
             width: parent.width
-            foreground: root.foreground
-            accent: root.accent
-            placeholderText: root.connected ? "Message…" : "Not connected"
-            enabled: root.connected
-            onAccepted: root.send()
-            Keys.onEscapePressed: function (event) {
-              root.focusSection = "messages"
-              keyCatcher.forceActiveFocus()
-              event.accepted = true
+            spacing: Style.space(6)
+
+            Text {
+              id: attachButton
+              anchors.verticalCenter: parent.verticalCenter
+              // nf-md-paperclip
+              text: "󰏢"
+              color: attachArea.containsMouse ? root.foreground : root.secondaryForeground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.subtitle
+
+              MouseArea {
+                id: attachArea
+                anchors.fill: parent
+                anchors.margins: -Style.space(4)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pickImages()
+              }
+            }
+
+            TextField {
+              id: composer
+              width: composerRow.width - attachButton.width - composerRow.spacing
+              foreground: root.foreground
+              accent: root.accent
+              placeholderText: root.connected ? "Message…" : "Not connected"
+              enabled: root.connected
+              onAccepted: root.send()
+              Keys.onEscapePressed: function (event) {
+                root.focusSection = "messages"
+                keyCatcher.forceActiveFocus()
+                event.accepted = true
+              }
             }
           }
         }

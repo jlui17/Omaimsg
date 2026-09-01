@@ -52,3 +52,11 @@ test('OMAIMSG_CONFIG overrides the derived config path', () => {
   assert.equal(paths.configPath, '/tmp/one-off.json')
   assert.equal(paths.pinsPath, '/h/.local/state/io.omaimsg.b/pins.json')
 })
+
+// smoke.js asks this same function where the daemon put a file, so the naming
+// rule has one home rather than a copy in the suite that checks it.
+test('an attachment is named by base64url of its guid, inside the id-named cache dir', () => {
+  const { attachmentPath } = instancePaths('io.omaimsg.b', ENV)
+  assert.equal(attachmentPath('MOCK-1'), '/h/.cache/io.omaimsg.b/attachments/TU9DSy0x')
+  assert.equal(attachmentPath('MOCK-1', '.full'), '/h/.cache/io.omaimsg.b/attachments/TU9DSy0x.full')
+})

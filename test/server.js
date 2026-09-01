@@ -25,6 +25,12 @@ const lastMessageOmitted = new Set()
 // routes inner-join chats and so serve nothing for those chats, while a
 // handle-scoped query with no chat relation still finds the messages.
 const chatLinkBroken = new Set([ORPHANED_TEST.guid, UNREACHABLE_TEST.guid])
+// Attachment guid -> the bytes an upload sent, so a sent image comes back as
+// the file that was sent rather than as the canned fixture. The real server
+// stores the upload and serves it from chat.db afterwards; without this the
+// panel promotes its optimistic row and the picture turns into the fixture.
+const uploaded = new Map()
+let uploadSeq = 0
 
 function log(...args) {
   console.error('omaimsg-mock:', ...args)
@@ -59,6 +65,15 @@ function readBody(req) {
         reject(err)
       }
     })
+    req.on('error', reject)
+  })
+}
+
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }
@@ -122,6 +137,15 @@ const server = createServer(async (req, res) => {
     const attachmentMatch = url.pathname.match(/^\/api\/v1\/attachment\/(.+)\/download$/)
     if (req.method === 'GET' && attachmentMatch) {
       const attachmentGuid = decodeURIComponent(attachmentMatch[1])
+      // An uploaded file is served back verbatim at either size. The real
+      // server would re-encode a resized one, but the point of keeping the
+      // bytes is that what was sent is what comes back.
+      const upload = uploaded.get(attachmentGuid)
+      if (upload) {
+        res.writeHead(200, { 'Content-Type': 'image/png' })
+        res.end(upload)
+        return
+      }
       const known = [...messages.values()].some((list) =>
         list.some((m) => m.attachments.some((a) => a.guid === attachmentGuid)))
       if (!known) {
@@ -251,6 +275,43 @@ const server = createServer(async (req, res) => {
         : matched.filter((m) => m.dateCreated <= body.before)
       const ordered = [...cut].reverse().slice(0, body.limit || 100)
       sendJson(res, 200, envelope(ordered))
+      return
+    }
+
+    // Multipart, one attachment per request, like the real messageRouter's
+    // /message/attachment. Parsed by handing the raw body back to the platform
+    // as a Response, which is what a fetch client would have sent.
+    if (req.method === 'POST' && url.pathname === '/api/v1/message/attachment') {
+      const raw = await readRawBody(req)
+      const form = await new Response(raw, { headers: { 'content-type': req.headers['content-type'] || '' } }).formData()
+      const file = form.get('attachment')
+      const chatGuid = form.get('chatGuid')
+      const chat = chats.get(chatGuid)
+      if (!chat) {
+        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
+        return
+      }
+      if (!file || typeof file === 'string') {
+        sendJson(res, 400, { status: 400, message: 'No attachment provided!' })
+        return
+      }
+
+      const bytes = Buffer.from(await file.arrayBuffer())
+      const name = String(form.get('name') || file.name || 'upload')
+      const attachment = {
+        guid: `MOCK-UPLOAD-${++uploadSeq}`,
+        mimeType: file.type || 'application/octet-stream',
+        transferName: name
+      }
+      uploaded.set(attachment.guid, bytes)
+
+      const sent = buildMessage({ chat, text: null, fromMe: true, ts: Date.now(), attachment })
+      messages.get(chatGuid).push(sent)
+      chat.lastMessage = sent
+      sendJson(res, 200, envelope(sent))
+
+      io.emit('new-message', { ...sent, tempGuid: form.get('tempGuid') })
+      io.emit('new-message', sent)
       return
     }
 

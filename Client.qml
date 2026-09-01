@@ -171,10 +171,14 @@ Item {
     if (!guid || !guid.length) return false
     if (root.attachmentPaths[guid] || root.attachmentPending[guid]) return true
     if (!request({ t: "attachment", guid: guid })) return false
+    root.markAttachmentPending(guid)
+    return true
+  }
+
+  function markAttachmentPending(guid) {
     var pending = Object.assign({}, root.attachmentPending)
     pending[guid] = true
     root.attachmentPending = pending
-    return true
   }
 
   function settleAttachment(guid, path) {
@@ -217,11 +221,15 @@ Item {
     return root.loadMessages(root.activeChatGuid)
   }
 
+  function nextTempId() {
+    return "omaimsg-" + Date.now() + "-" + Math.floor(Math.random() * 1000000)
+  }
+
   // False when the frame could not be written; the optimistic row is appended
   // only once the send is on the wire.
   function sendMessage(text) {
     if (!root.activeChatGuid.length || !text || !text.length) return false
-    var tempId = "omaimsg-" + Date.now() + "-" + Math.floor(Math.random() * 1000000)
+    var tempId = root.nextTempId()
     if (!request({ t: "send", chatGuid: root.activeChatGuid, text: text, tempId: tempId }))
       return false
     root.appendActiveMessage({
@@ -232,6 +240,37 @@ Item {
       ts: Date.now(),
       fromMe: true,
       sender: "",
+      pending: true,
+      failed: false
+    })
+    return true
+  }
+
+  // One image per send, so picking several files is several of these and one
+  // failing leaves the rest alone. The daemon copies the file into its cache
+  // under `tempId` and answers with an `attachment` frame for that key, which
+  // is what the optimistic row renders from -- images always come from the
+  // daemon's cache, never from the path the picker handed us. That key is
+  // marked pending here so the delegate's own request for it is absorbed, and
+  // it stays pending if the send fails: nothing is ever cached under a tempId
+  // BlueBubbles refused, so re-requesting it would only 404 on every redraw.
+  function sendImage(filePath) {
+    if (!root.activeChatGuid.length || !filePath || !filePath.length) return false
+    var tempId = root.nextTempId()
+    if (!request({ t: "sendImage", chatGuid: root.activeChatGuid, path: filePath, tempId: tempId }))
+      return false
+    root.markAttachmentPending(tempId)
+    root.appendActiveMessage({
+      guid: tempId,
+      tempId: tempId,
+      optimistic: true,
+      text: "",
+      ts: Date.now(),
+      fromMe: true,
+      sender: "",
+      // A local row, so `mime` is not BlueBubbles' original the way a fetched
+      // message's is; it only has to pass the panel's is-this-an-image test.
+      attachments: [{ guid: tempId, mime: "image/*", name: filePath.slice(filePath.lastIndexOf("/") + 1) }],
       pending: true,
       failed: false
     })
@@ -256,6 +295,22 @@ Item {
       out.push(tempId ? Object.assign({}, row, { tempId: tempId }) : row)
     }
     return out
+  }
+
+  // Swaps the thread for a server page. Distinct from setActiveMessages, which
+  // also serves incremental writes: a replacement is the only mutation that can
+  // drop a row, so the rule that a send still on the wire outlives one lives
+  // here rather than at the call site. Without it an optimistic row vanishes
+  // from under the reader, and the `ack` behind it finds nothing to mark failed,
+  // so a failure disappears with no trace. An in-flight send is always the
+  // newest thing in the thread, so it goes last.
+  function replaceActiveMessages(list) {
+    var out = list.slice()
+    for (var i = 0; i < root.activeMessages.length; i++) {
+      var row = root.activeMessages[i]
+      if (row && row.optimistic === true && row.pending === true) out.push(row)
+    }
+    root.setActiveMessages(out)
   }
 
   function setExhausted(chatGuid, exhausted) {
@@ -306,6 +361,28 @@ Item {
       if (list[i].guid !== guid) continue
       list[i] = Object.assign({}, list[i], fields)
       root.setActiveMessages(list)
+      return
+    }
+  }
+
+  // The ack names its chat, so a send answered while the reader is in a
+  // different thread still resolves the row it left behind. Patching only the
+  // active list left that row pending forever, and a replacement now carries a
+  // pending row rather than wiping it, so the bubble would never come right.
+  function patchMessage(chatGuid, guid, fields) {
+    if (!chatGuid.length || chatGuid === root.activeChatGuid) {
+      root.patchActiveMessage(guid, fields)
+      return
+    }
+    var thread = root.threadCache[chatGuid]
+    if (!thread) return
+    var list = thread.slice()
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].guid !== guid) continue
+      list[i] = Object.assign({}, list[i], fields)
+      var next = Object.assign({}, root.threadCache)
+      next[chatGuid] = list
+      root.threadCache = next
       return
     }
   }
@@ -466,9 +543,8 @@ Item {
         // This frame replaces the thread, so the older pages paged in behind it
         // are gone and the thread can be paged back through again.
         root.setExhausted(frame.chatGuid || "", false)
-        if ((frame.chatGuid || "") === root.activeChatGuid) {
-          root.setActiveMessages(root.withKnownTempIds(frame.messages || []))
-        }
+        if ((frame.chatGuid || "") === root.activeChatGuid)
+          root.replaceActiveMessages(root.withKnownTempIds(frame.messages || []))
         break
 
       case "olderMessages":
@@ -499,7 +575,7 @@ Item {
           // Re-key the row to the real message so a later echo that carries no
           // tempId still matches on guid rather than falling through to text.
           if (frame.ok === true && frame.guid) fields.guid = frame.guid
-          root.patchActiveMessage(frame.tempId || "", fields)
+          root.patchMessage(frame.chatGuid || "", frame.tempId || "", fields)
           if (frame.ok !== true) root.sendFailed(frame.message || "")
         }
         break

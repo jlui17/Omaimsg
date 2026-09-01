@@ -28,6 +28,11 @@
 //   are only populated when the query carries `with=attachment`
 //   (chatRouter.ts getMessages: withAttachments); verified against the real
 //   server that omitting it yields no attachments on any message.
+// - POST /api/v1/message/attachment is multipart rather than JSON: an
+//   `attachment` file part plus `chatGuid`, `tempGuid`, `name` and `method`
+//   fields, and exactly one attachment per request, so several files are
+//   several sends. The echo it produces is stamped with tempGuid the same way
+//   a text send's is.
 // - POST /api/v1/message/text body: {chatGuid, tempGuid, message, method};
 //   the server defaults `method` to "apple-script" when omitted
 //   (api/interfaces/messageInterface.ts), which is also the safer default
@@ -76,6 +81,29 @@ const SEEN_MESSAGE_GUIDS = 500
 // this the run is reported as the scan length: a chat nobody has touched in a
 // hundred messages is already saying "lots".
 export const UNREAD_SCAN_LIMIT = 100
+// Content type for an outgoing attachment's multipart part, by extension.
+// BlueBubbles echoes a mimeType back and the panel decides what to render from
+// it, so a part sent with no type returns as octet-stream and the image the
+// user just sent renders as "[attachment]" instead of as a picture. Keyed to
+// the extensions the panel's picker offers.
+const ATTACHMENT_MIME_BY_EXTENSION = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  bmp: 'image/bmp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff'
+}
+
+function attachmentMime(name) {
+  const dot = name.lastIndexOf('.')
+  if (dot < 0) return 'application/octet-stream'
+  return ATTACHMENT_MIME_BY_EXTENSION[name.slice(dot + 1).toLowerCase()] || 'application/octet-stream'
+}
 
 // Both transports plus the contact index behind one interface: callers get
 // protocol-shaped Chat/Message objects and a connection state, never a
@@ -207,6 +235,10 @@ export class BlueBubblesSession {
     return this.client.sendText({ chatGuid, text, tempGuid })
   }
 
+  async sendAttachment({ chatGuid, bytes, name, tempGuid }) {
+    return this.client.sendAttachment({ chatGuid, bytes, name, tempGuid })
+  }
+
   async downloadAttachment(guid, filePath, opts) {
     return this.client.downloadAttachment(guid, filePath, opts)
   }
@@ -229,7 +261,7 @@ class BlueBubblesClient {
     this.method = method
   }
 
-  async _request(path, { method = 'GET', query = {}, body } = {}) {
+  async _request(path, { method = 'GET', query = {}, body, form } = {}) {
     const url = new URL(this.serverUrl + path)
     url.searchParams.set('password', this.password)
     for (const [key, value] of Object.entries(query)) {
@@ -238,8 +270,10 @@ class BlueBubblesClient {
 
     const res = await fetch(url, {
       method,
+      // A FormData body sets its own multipart content-type, boundary and all,
+      // so naming one here would break the part the server reads.
       headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined
+      body: form || (body ? JSON.stringify(body) : undefined)
     })
 
     if (res.status === 401) throw new Error('BlueBubbles rejected the password (401)')
@@ -348,6 +382,16 @@ class BlueBubblesClient {
     })
     // Own send: always fromMe, so sender is '' regardless of contact index.
     return normalizeMessage(data)
+  }
+
+  async sendAttachment({ chatGuid, bytes, name, tempGuid }) {
+    const form = new FormData()
+    form.append('attachment', new Blob([bytes], { type: attachmentMime(name) }), name)
+    form.append('chatGuid', chatGuid)
+    form.append('tempGuid', tempGuid)
+    form.append('name', name)
+    form.append('method', this.method)
+    return normalizeMessage(await this._request('/api/v1/message/attachment', { method: 'POST', form }))
   }
 
   async getContacts() {

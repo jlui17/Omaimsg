@@ -35,7 +35,7 @@ const notifyLogPath = path.join(notifyBinDir, 'raised.ndjson')
 const sandbox = { XDG_RUNTIME_DIR: runtimeDir, XDG_STATE_HOME: stateHome, XDG_CACHE_HOME: cacheHome }
 // Where the daemon under test will put things, asked of the same function it
 // asks, so this file holds no second copy of the naming rules.
-const { socketPath, pinsPath: pinsFilePath, readStatePath: readStateFilePath, cachePath: cacheFilePath } = instancePaths(PLUGIN_ID, sandbox)
+const { socketPath, pinsPath: pinsFilePath, readStatePath: readStateFilePath, cachePath: cacheFilePath, attachmentPath: cachePathFor } = instancePaths(PLUGIN_ID, sandbox)
 
 const failures = []
 function report(step, cond, detail) {
@@ -79,6 +79,18 @@ function waitFileExists(filePath, timeoutMs) {
       if (existsSync(filePath)) return resolve()
       if (Date.now() > deadline) return reject(new Error(`timeout waiting for ${filePath}`))
       setTimeout(attempt, 100)
+    }
+    attempt()
+  })
+}
+
+function waitFileGone(filePath, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      if (!existsSync(filePath)) return resolve()
+      if (Date.now() > deadline) return reject(new Error(`timeout waiting for ${filePath} to go`))
+      setTimeout(attempt, 50)
     }
     attempt()
   })
@@ -778,6 +790,116 @@ async function main() {
     stateAfterRead.unread === unreadBaseline,
     `unread=${stateAfterRead.unread} baseline=${unreadBaseline}`
   )
+
+  // Image sends. One frame per file, so a multi-file pick is several of these,
+  // and the batch below deliberately mixes a good file with one that is not
+  // there: the failure must land on its own row and leave the other alone.
+  const pickedBytes = Buffer.from('picked-image-bytes')
+  const pickedImage = path.join(runtimeDir, 'picked photo.png')
+  writeFileSync(pickedImage, pickedBytes)
+  const imageTempId = 'smoke-image-1'
+  const missingTempId = 'smoke-image-missing'
+  client.send({ t: 'sendImage', chatGuid, path: pickedImage, tempId: imageTempId })
+  client.send({ t: 'sendImage', chatGuid, path: path.join(runtimeDir, 'not-there.png'), tempId: missingTempId })
+
+  const cachedCopy = await client.waitFor((f) => f.t === 'attachment' && f.guid === imageTempId)
+  report(
+    'sendImage -> the picked file is served from the daemon cache under its tempId',
+    cachedCopy.path === cachePathFor(imageTempId) && readFileSync(cachedCopy.path).equals(pickedBytes),
+    JSON.stringify(cachedCopy)
+  )
+
+  const imageAck = await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === imageTempId)
+  report(
+    'sendImage -> ack on the existing send contract, carrying the real guid',
+    imageAck.ok === true && typeof imageAck.guid === 'string' && imageAck.guid.length > 0,
+    JSON.stringify(imageAck)
+  )
+
+  const missingAck = await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === missingTempId)
+  report(
+    'sendImage -> a file that is no longer there fails on its own row',
+    missingAck.ok === false && typeof missingAck.message === 'string' && missingAck.message.length > 0,
+    JSON.stringify(missingAck)
+  )
+  report(
+    'sendImage -> one failure in a batch leaves the good send completed',
+    imageAck.ok === true,
+    JSON.stringify(imageAck)
+  )
+  report('sendImage -> a failed copy caches nothing', !existsSync(cachePathFor(missingTempId)))
+
+  const imageEcho = await client.waitFor(
+    (f) => f.t === 'message' && f.chatGuid === chatGuid && f.message.tempId === imageTempId
+  )
+  const echoedAttachment = (imageEcho.message.attachments || [])[0]
+  report(
+    'sendImage -> the echo carries the tempId and names the real attachment guid',
+    (imageEcho.message.attachments || []).length === 1 && echoedAttachment.guid !== imageTempId,
+    JSON.stringify(imageEcho.message)
+  )
+  report(
+    'sendImage -> the echoed attachment keeps the picked file name, so the multipart name field lands',
+    echoedAttachment.name === path.basename(pickedImage),
+    JSON.stringify(echoedAttachment)
+  )
+  // The panel decides what to render from `mime`, so a send that leaves the
+  // multipart part untyped comes back as octet-stream and the picture the user
+  // just sent renders as "[attachment]".
+  report(
+    'sendImage -> the echoed attachment is typed as an image, so the promoted row renders as one',
+    echoedAttachment.mime === 'image/png',
+    JSON.stringify(echoedAttachment)
+  )
+
+  // The whole round trip in one assertion: what the panel draws once the echo
+  // promotes the row is fetched by the real guid, and it has to be the file
+  // that was picked, not something the server made up.
+  client.send({ t: 'attachment', guid: echoedAttachment.guid })
+  const roundTripped = await client.waitFor((f) => f.t === 'attachment' && f.guid === echoedAttachment.guid)
+  report(
+    'sendImage -> fetching the echoed attachment returns the bytes that were sent',
+    readFileSync(roundTripped.path).equals(pickedBytes),
+    JSON.stringify(roundTripped)
+  )
+  const duplicateImageEcho = await client
+    .waitFor((f) => f.t === 'message' && f.message.guid === imageEcho.message.guid, 1000)
+    .catch(() => null)
+  report(
+    'sendImage -> the second echo of the same guid is dropped, so the row is promoted once',
+    duplicateImageEcho === null,
+    JSON.stringify(duplicateImageEcho)
+  )
+  let tempCopyGone = true
+  try {
+    await waitFileGone(cachePathFor(imageTempId), 2000)
+  } catch (err) {
+    tempCopyGone = false
+  }
+  report('sendImage -> the tempId copy is cleaned up once the echo lands', tempCopyGone)
+
+  // The other way a send fails: the daemon has already cached its copy by the
+  // time BlueBubbles refuses, so the ack has to come back failed after that.
+  const rejectedTempId = 'smoke-image-rejected'
+  client.send({ t: 'sendImage', chatGuid: 'iMessage;-;+15559999999', path: pickedImage, tempId: rejectedTempId })
+  const rejectedAck = await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === rejectedTempId)
+  report(
+    'sendImage -> a chat the server refuses fails on its own row too',
+    rejectedAck.ok === false && typeof rejectedAck.message === 'string' && rejectedAck.message.length > 0,
+    JSON.stringify(rejectedAck)
+  )
+  // The other half of the cleanup rule: only an echo takes a copy away. A send
+  // that failed after being cached keeps it, because the failed row on screen is
+  // still rendering from it.
+  report(
+    'sendImage -> a refused send keeps its cached copy, which its failed row is still showing',
+    existsSync(cachePathFor(rejectedTempId))
+  )
+
+  const noPathTempId = 'smoke-image-nopath'
+  client.send({ t: 'sendImage', chatGuid, tempId: noPathTempId })
+  const noPathAck = await client.waitFor((f) => f.t === 'ack' && f.for === 'send' && f.tempId === noPathTempId)
+  report('sendImage without a path -> a failed ack, not silence', noPathAck.ok === false, JSON.stringify(noPathAck))
 
   const chatsAfterRead = await settledChats(client)
   const readChat = chatsAfterRead.chats.find((c) => c.guid === chatGuid)

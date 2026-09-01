@@ -568,6 +568,11 @@
     <div class="flow"><div class="n">5</div><div class="who w-bb">BlueBubbles</div><div class="what">also echoes the message on the websocket, more than once, under one id.</div></div>
     <div class="flow"><div class="n">6</div><div class="who w-daemon">daemon</div><div class="what">forwards it once, to all panels, still carrying the <code>tempId</code>.</div></div>
     <div class="flow"><div class="n">7</div><div class="who w-plugin">plugin</div><div class="what">upgrades the row it already drew. No duplicate, no flicker.</div></div>
+    <p>An image goes the same way, with one extra step at the front: the daemon copies the
+    picked file into its own cache under the <code>tempId</code> and hands back that path
+    first, so the row you already drew shows the picture from the cache rather than from
+    wherever you picked it. The server takes one file per request, so picking several files
+    is several of these runs, each failing or landing on its own.</p>
   </div>
 </details>
 

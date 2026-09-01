@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -345,6 +346,27 @@ def run(d: Driver) -> None:
     d.eval(q(CLIENT, f"x.setChats(JSON.parse({saved!r})); return true;"))
     arrived = wait_for(d, q(PANEL, "return x.activeGuid;"), lambda v: v == stale)
     d.eq("the held click is spent on the next chat list", arrived, stale)
+
+    d.section("sending an image")
+    # The picker's own sequence, which no other send takes: the panel steps
+    # aside for the file dialog, then reopens and sends. Reopening re-requests
+    # the thread, and a `messages` frame REPLACES it -- so an optimistic row
+    # appended in that same tick is wiped before its ack can reach it, and the
+    # ack then has no row to mark failed. A picked file that is not there is the
+    # deterministic way to see that: the daemon always refuses it.
+    missing = f"file://{Path(tempfile.gettempdir()) / 'omaimsg-ui-not-there.png'}"
+    d.eval(q(PANEL, "x.close(); return true;"))
+    wait_for(d, q(PANEL, "return x.opened;"), lambda v: v is False)
+    d.eval(q(PANEL, f"x.open(); x.sendPickedImages([{missing!r}]); return true;"))
+    failed = wait_for(
+        d,
+        q(CLIENT, "return (x.activeMessages||[]).filter(function(m){return m.failed===true;}).length;"),
+        lambda v: isinstance(v, int) and v >= 1,
+    )
+    d.check(
+        "a send that fails while the panel reopens still draws its failed row",
+        isinstance(failed, int) and failed >= 1,
+    )
 
 
 def main() -> int:

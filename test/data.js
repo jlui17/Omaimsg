@@ -157,17 +157,21 @@ function chatSnapshot(chat) {
   return rest
 }
 
-function buildMessage({ chat, text, fromMe, ts, attachmentOnly }) {
+// `attachment` carries a specific one (what an upload just stored);
+// `attachmentOnly` takes the canned fixture. Either way the message is
+// attachment-only, which is what a real image send with no caption is.
+function buildMessage({ chat, text, fromMe, ts, attachmentOnly, attachment }) {
   const handle = fromMe ? null : { originalROWID: nextRowId(), address: pick(chat.participants).address, service: 'iMessage' }
+  const attached = attachment || (attachmentOnly ? ATTACHMENT_TEST : null)
   return {
     originalROWID: nextRowId(),
     guid: guid(),
-    text: attachmentOnly ? null : text,
+    text: attached ? null : text,
     handle,
     handleId: handle?.originalROWID ?? 0,
     otherHandle: 0,
     chats: [chatSnapshot(chat)],
-    attachments: attachmentOnly ? [{ originalROWID: nextRowId(), ...ATTACHMENT_TEST }] : [],
+    attachments: attached ? [{ originalROWID: nextRowId(), ...attached }] : [],
     isFromMe: fromMe,
     dateCreated: ts,
     dateRead: fromMe ? null : ts + 1000,

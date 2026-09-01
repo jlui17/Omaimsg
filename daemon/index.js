@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
-import { copyFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname } from 'node:path'
 
 import { loadConfig, logConfigOutcome } from './lib/config.js'
 import { attachmentPath, pluginId, socketPath } from './lib/paths.js'
@@ -82,6 +83,14 @@ if (config.ok) {
   }
 
   session.onMessage = ({ chatGuid, chat, message }) => {
+    // A sendImage's copy is keyed by the tempId the echo carries, and the echo
+    // names the attachment by its real guid instead, so that copy has no reader
+    // left. A text send has none to remove, and a send that never echoes keeps
+    // its copy on purpose: the failed row is still rendering it.
+    if (message.tempId) {
+      rm(attachmentPath(message.tempId), { force: true })
+        .catch((err) => logger.warn('send: temp attachment cleanup failed', { tempId: message.tempId, err: err.message }))
+    }
     const cached = store.upsertFromMessage(chat, message)
     store.appendToThread(chatGuid, message)
     bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.unreadChats() })
@@ -227,6 +236,40 @@ async function handleCommand(payload, reply) {
         reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId: payload.tempId, guid: '', ok: false, message: err.message })
       }
       return
+
+    case 'sendImage': {
+      const tempId = payload.tempId || ''
+      const failSend = (message) =>
+        reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId, guid: '', ok: false, message })
+      if (!config.ok) {
+        failSend(lastError)
+        return
+      }
+      if (!payload.chatGuid || !payload.path || !tempId) {
+        failSend('chatGuid, path and tempId required')
+        return
+      }
+      try {
+        // Copied into the cache and announced there before the send goes out:
+        // the optimistic row then renders from the daemon's cache like every
+        // other image, and QML never learns how a cache path is named.
+        const bytes = await readFile(payload.path)
+        const cached = attachmentPath(tempId)
+        await mkdir(dirname(cached), { recursive: true })
+        await writeFile(cached, bytes)
+        reply({ t: 'attachment', guid: tempId, path: cached })
+        const sent = await session.sendAttachment({
+          chatGuid: payload.chatGuid,
+          bytes,
+          name: basename(payload.path),
+          tempGuid: tempId
+        })
+        reply({ t: 'ack', for: 'send', chatGuid: payload.chatGuid, tempId, guid: sent.guid || '', ok: true })
+      } catch (err) {
+        failSend(err.message)
+      }
+      return
+    }
 
     case 'attachment':
       if (!config.ok) {
