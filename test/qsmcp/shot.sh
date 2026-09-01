@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Captures the headless compositor while the harness is up. The MCP server owns
-# the sway instance and never exports its socket, so this locates the runtime
-# dir the server made and captures through that.
+# the sway instance and never exports its socket, so the runtime dir it made is
+# named by the caller -- the harness object carries it, and check.py already
+# reads it for wtype. A harness runs per worktree, so a script that went looking
+# in /tmp would capture a sibling's compositor and exit 0.
 #
 # The probe's own screenshot() cannot grab an Omarchy bar: it requires the
 # window's content item to have exactly one visual child, and BarPanel has two.
@@ -9,20 +11,21 @@
 # video through the same socket.
 set -euo pipefail
 
-OUT="${1:-/tmp/omaimsg-headless.png}"
+if [[ $# -lt 1 ]]; then
+  echo "usage: shot.sh <XDG_RUNTIME_DIR> [out.png]" >&2
+  exit 2
+fi
 
-mapfile -t dirs < <(find /tmp -maxdepth 2 -type d -name xdg -path '/tmp/quickshell-mcp-*' 2>/dev/null)
-live=()
-for d in "${dirs[@]}"; do
-  compgen -G "$d/wayland-*" >/dev/null && live+=("$d")
-done
+xdg="$1"
+OUT="${2:-/tmp/omaimsg-headless.png}"
 
-case ${#live[@]} in
-  0) echo "no live harness: call the MCP server's up() first" >&2; exit 1 ;;
-  1) ;;
-  *) printf 'more than one live harness, pass XDG_RUNTIME_DIR yourself:\n%s\n' "${live[*]}" >&2; exit 1 ;;
-esac
+# pipefail would abort the assignment on no match, which is the case that
+# needs the message.
+sock=$(compgen -G "$xdg/wayland-[0-9]*" | head -1) || true
+if [[ -z $sock ]]; then
+  echo "no live harness in $xdg: call the MCP server's up() first" >&2
+  exit 1
+fi
 
-sock=$(basename "$(compgen -G "${live[0]}/wayland-[0-9]*" | head -1)")
-XDG_RUNTIME_DIR="${live[0]}" WAYLAND_DISPLAY="$sock" grim "$OUT"
+XDG_RUNTIME_DIR="$xdg" WAYLAND_DISPLAY="$(basename "$sock")" grim "$OUT"
 echo "$OUT"
