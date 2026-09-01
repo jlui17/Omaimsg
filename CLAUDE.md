@@ -24,8 +24,9 @@ Working knowledge that bites:
 
 ## Omarchy dev loop
 
-- `./install.sh` is the install, from a checkout or from the installed copy. It owns the rsync exclude list, so nothing else states it. A symlink breaks hot reload (the shell's file watcher can't see writes through it), which is why it copies. For a variant beside the one you use, rsync to `plugins/io.omaimsg.b/` with the manifest `id` rewritten and run that copy's `install.sh`; give it its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js`, or a send lands in a real conversation. `README.md` has both flows in full.
-- Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate.
+- `./install.sh` is the install, from a checkout or from the installed copy. It owns the rsync exclude list, so nothing else states it. A symlink breaks hot reload (the shell's file watcher can't see writes through it), which is why it copies. `./install.sh <id>` installs a variant beside it, rewriting the manifest id in the copy; give it its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js`, or a send lands in a real conversation. `README.md` has both flows in full.
+- Whether an install is a variant is decided once, by `install.sh`, and recorded in `.deploy.json` alongside the branch and sha — the installed copy has no `.git` and the rewritten manifest agrees with itself, so neither can work it out later. QML reads the stamp and holds no rule of its own, the same split as `daemon/lib/paths.js`.
+- Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate — which is why `install.sh` runs it unless told `--no-restart`.
 - `omarchy-shell io.omaimsg toggle|open|close` drives the panel from scripts/keybindings (requires `OMARCHY_PATH=/usr/share/omarchy`).
 - Templates this code follows: Omarchy first-party plugins (`/usr/share/omarchy/shell/plugins/`, especially clipboard and agents) and `srineshr1/omarchy-whatsapp` for the daemon/socket architecture. `docs/research/` has the full background.
 

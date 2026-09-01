@@ -45,6 +45,10 @@ checkout.
 The protocol suites stop at the socket. `test/qsmcp/check.py` picks up where they stop, asserting
 what the widget renders and how the panel answers the keyboard:
 
+- **Build identity**: the install you use renders a bare glyph and no build line; a variant renders
+  its id beside the glyph, keeps it when a count arrives, and names its branch and sha in the panel
+  header. Both staged installs carry a `.deploy.json`, so the checks pin the recorded flag rather
+  than whether the file exists.
 - **The unread badge**: bare glyph at zero, the count beside the glyph, the `99+` clamp, the tooltip.
 - **The chat list**: the daemon's order survives into what renders, and the empty state clears.
 - **Pinning**: a pinned chat renders first, unpinning restores the recency order.

@@ -40,6 +40,8 @@ VARIANT_BAR = find(f"o.moduleName==={VARIANT_ID!r} && String(o).indexOf('BarWidg
 CLIENT = find("o.socketPath!==undefined", root=BAR)
 VARIANT_CLIENT = find("o.socketPath!==undefined", root=VARIANT_BAR)
 BUTTON = find("o.tooltipText!==undefined", root=BAR)
+VARIANT_BUTTON = find("o.tooltipText!==undefined", root=VARIANT_BAR)
+VARIANT_PANEL = find(f"o.moduleName==={VARIANT_ID!r} && String(o).indexOf('Panel')>=0")
 COMPOSER = find("String(o.placeholderText||'').indexOf('Message')===0", root=PANEL)
 
 
@@ -99,6 +101,29 @@ def run(d: Driver) -> None:
         sockets[0].endswith(f"/{CANONICAL_ID}.sock") and sockets[1].endswith(f"/{VARIANT_ID}.sock"),
     )
 
+    # Both installs carry a build stamp; only the one flagged a variant says so.
+    # Without that the canonical install would announce a branch and sha to
+    # someone who just installed it from the marketplace.
+    # Unread is pinned first: the seeded server gives the canonical install a
+    # count, and this is asking what the label holds besides one.
+    d.eval(q(CLIENT, "x.unread=0; return x.unread;"))
+    d.eq(
+        "the install you use renders no id beside the glyph",
+        d.eval(q(BUTTON, "return x.text;")),
+        GLYPH,
+    )
+    d.eq("the install you use shows no build line", d.eval(q(BAR, "return x.buildLine;")), "")
+    d.eq(
+        "a variant names itself in the bar",
+        d.eval(q(VARIANT_BUTTON, "return x.text;")),
+        f"{GLYPH} {VARIANT_ID}",
+    )
+    d.eq(
+        "a variant's panel names its build",
+        d.eval(q(VARIANT_PANEL, "return x.buildLine;")),
+        f"{VARIANT_ID} · stage-branch @ abc1234",
+    )
+
     d.section("wiring")
     conn = wait_for(d, q(CLIENT, "return x.connection;"), lambda v: v == "connected")
     d.eq("client reaches the daemon", conn, "connected")
@@ -117,6 +142,13 @@ def run(d: Driver) -> None:
 
     text, active, tip = badge(3)
     d.eq("unread renders beside the glyph", text, f"{GLYPH} 3")
+    d.eval(q(VARIANT_CLIENT, "x.unread=3; return x.unread;"))
+    d.eq(
+        "a variant keeps its id when a count arrives",
+        d.eval(q(VARIANT_BUTTON, "return x.text;")),
+        f"{GLYPH} {VARIANT_ID} · 3",
+    )
+    d.eval(q(VARIANT_CLIENT, "x.unread=0; return x.unread;"))
     d.eq("unread marks the button active", active, True)
     d.eq("unread tooltip counts", tip, "Omaimsg · 3 unread")
 

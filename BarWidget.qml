@@ -27,16 +27,42 @@ BarWidget {
   // a plugin into a directory named after this id, which is why the directory
   // is the honest fallback when the manifest cannot be read.
   readonly property string pluginId: {
+    var parsed = root.readJson(manifestFile)
+    if (parsed && typeof parsed.id === "string" && parsed.id.length > 0) return parsed.id
+    return root.pluginDir.substring(root.pluginDir.lastIndexOf("/") + 1)
+  }
+
+  function readJson(view) {
     try {
-      var parsed = JSON.parse(manifestFile.text())
-      if (parsed && typeof parsed.id === "string" && parsed.id.length > 0) return parsed.id
+      var parsed = JSON.parse(view.text())
+      if (parsed && typeof parsed === "object") return parsed
     } catch (e) {
     }
-    return root.pluginDir.substring(root.pluginDir.lastIndexOf("/") + 1)
+    return null
   }
 
   readonly property int unread: client.unread
   readonly property bool showCount: root.setting("showUnreadCount", true) === true
+  readonly property string countLabel: root.showCount && root.unread > 0
+    ? (root.unread > 99 ? "99+" : String(root.unread))
+    : ""
+
+  // install.sh is the only thing that can know this install is a variant: once
+  // the manifest is rewritten the copy agrees with itself. So it records the
+  // answer and the widget reads it, holding no rule of its own.
+  readonly property var deploy: root.readJson(deployFile)
+  readonly property bool variant: root.deploy ? root.deploy.variant === true : false
+
+  // Only a variant says anything, so the install you actually use stays quiet.
+  // A variant whose stamp names no commit says so rather than showing nothing,
+  // which would read as the canonical install.
+  readonly property string buildLine: {
+    if (!root.variant) return ""
+    var branch = root.deploy.branch || ""
+    var sha = root.deploy.sha || ""
+    if (branch.length === 0 || sha.length === 0) return root.pluginId + " · no build stamp"
+    return root.pluginId + " · " + branch + " @ " + sha
+  }
 
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
@@ -52,6 +78,7 @@ BarWidget {
     panelLoader.item.anchorItem = button
     panelLoader.item.hostWidget = root
     panelLoader.item.pluginId = root.pluginId
+    panelLoader.item.buildLine = root.buildLine
     panelLoader.item.client = client
     panelLoader.item.settings = root.settings
   }
@@ -66,6 +93,15 @@ BarWidget {
     id: manifestFile
     path: root.pluginDir + "/manifest.json"
     blockLoading: true
+  }
+
+  // Absent by design in a tree nobody ran install.sh over, so a failed read is
+  // not a fault to report — it is the quiet the canonical install wants.
+  FileView {
+    id: deployFile
+    path: root.pluginDir + "/.deploy.json"
+    blockLoading: true
+    printErrors: false
   }
 
   Client {
@@ -98,15 +134,19 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.showCount && root.unread > 0
-      ? root.glyph + " " + (root.unread > 99 ? "99+" : String(root.unread))
-      : root.glyph
+    text: {
+      var parts = []
+      if (root.variant) parts.push(root.pluginId)
+      if (root.countLabel.length > 0) parts.push(root.countLabel)
+      return parts.length > 0 ? root.glyph + " " + parts.join(" · ") : root.glyph
+    }
     active: root.unread > 0
     dimmed: !client.linkUp
     tooltipText: {
-      if (!client.linkUp) return client.daemonStarting ? "Omaimsg · starting daemon" : "Omaimsg · daemon offline"
-      if (root.unread > 0) return "Omaimsg · " + root.unread + " unread"
-      return "Omaimsg"
+      var name = root.variant ? "Omaimsg " + root.pluginId : "Omaimsg"
+      if (!client.linkUp) return client.daemonStarting ? name + " · starting daemon" : name + " · daemon offline"
+      if (root.unread > 0) return name + " · " + root.unread + " unread"
+      return name
     }
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
