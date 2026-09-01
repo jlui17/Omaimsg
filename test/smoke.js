@@ -12,7 +12,6 @@ import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_C
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 
-const daemonEntry = process.env.OMAIMSG_DAEMON_ENTRY || 'daemon/index.js'
 const PORT = 39000 + (process.pid % 500)
 const PASSWORD = 'testpass'
 // Well under every canned chat's 10-30 messages, so a thread always has pages
@@ -276,7 +275,7 @@ async function main() {
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
 
   trackSpawn(
-    spawn('node', [daemonEntry], {
+    spawn('node', ['daemon/index.js'], {
       cwd: repoRoot,
       // A page size (3) far smaller than the 7 canned chats forces every
       // `chats` command through the daemon's multi-page fetch for the whole

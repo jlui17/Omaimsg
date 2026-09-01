@@ -605,7 +605,7 @@ Item {
 
   Process {
     id: fallbackStarter
-    command: ["setsid", "node", root.pluginDir + "/daemon/dist/omaimsg-daemon.cjs"]
+    command: ["setsid", "node", root.pluginDir + "/daemon/index.js"]
     environment: ({ OMAIMSG_PLUGIN_ID: root.pluginId })
   }
 

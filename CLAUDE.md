@@ -13,20 +13,18 @@ iMessage in the Omarchy menu bar: a Quickshell QML bar plugin (`manifest.json`, 
 
 ## Verification
 
-`mise run test` is the check for any change: the daemon protocol suite, the same suite against the committed bundle, then the UI suite. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). `TESTING.md` is the full picture — suites, setup, the manual `qmllint` and `omarchy plugin validate` checks, and how the headless harness works; read it before changing how anything is tested.
+`mise run test` is the check for any change: the path-derivation suite, the daemon protocol suite, then the UI suite. Keep it green, and when adding an assertion, mutation-prove it (break the code it pins, watch it fail, restore). `TESTING.md` is the full picture — suites, setup, the manual `qmllint` and `omarchy plugin validate` checks, and how the headless harness works; read it before changing how anything is tested.
 
 Working knowledge that bites:
 
-- A change under `daemon/` re-runs `bun run bundle` and commits `daemon/dist/omaimsg-daemon.cjs` in the same round. It's the daemon installed plugins actually run, so `test:bundle` fails without it.
+- The daemon ships as source and `install.sh` installs its one dependency, so there is no build step and nothing generated to commit. `daemon/dist/` is gitignored. `package-lock.json` is committed because `install.sh` runs `npm ci` against it, so an install resolves what the checkout resolved.
 - UI checks address nodes by what they are (`moduleName === "io.omaimsg"`, the composer's `placeholderText`), never by child index — index paths move when Omarchy reorders the bar. Root each finder at the widget that owns it: the staged bar holds two installs, so an unrooted predicate answers for whichever the walk reaches first.
 - Keystrokes go through `wtype`, bracketed with `-s 300`. Sway drops events delivered before the virtual keyboard's keymap settles, and a bare `wtype j` then exits 0 having done nothing at all.
 - The quickshell-mcp pin lives in `.mcp.json` alone; the mise task reads it from there, so it cannot drift.
 
 ## Omarchy dev loop
 
-- Install is a real copy: `rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
-  --exclude .mcp.json --exclude .claude --exclude mise.toml --exclude /test/qsmcp/stage \
-  ./ ~/.config/omarchy/plugins/io.omaimsg/`. A symlink breaks hot reload (the shell's file watcher can't see writes through it). Rsync to `plugins/io.omaimsg.b/` with the manifest `id` rewritten to install a variant beside it; give it its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js`, or a send lands in a real conversation.
+- `./install.sh` is the install, from a checkout or from the installed copy. It owns the rsync exclude list, so nothing else states it. A symlink breaks hot reload (the shell's file watcher can't see writes through it), which is why it copies. For a variant beside the one you use, rsync to `plugins/io.omaimsg.b/` with the manifest `id` rewritten and run that copy's `install.sh`; give it its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js`, or a send lands in a real conversation. `README.md` has both flows in full.
 - Hot reload refreshes panel code, but anything touching the bar-widget instance (`BarWidget.qml`, its `IpcHandler`, the manifest) needs `omarchy-restart-shell` to re-instantiate.
 - `omarchy-shell io.omaimsg toggle|open|close` drives the panel from scripts/keybindings (requires `OMARCHY_PATH=/usr/share/omarchy`).
 - Templates this code follows: Omarchy first-party plugins (`/usr/share/omarchy/shell/plugins/`, especially clipboard and agents) and `srineshr1/omarchy-whatsapp` for the daemon/socket architecture. `docs/research/` has the full background.

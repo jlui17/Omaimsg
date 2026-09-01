@@ -1,12 +1,11 @@
 # Testing
 
-Four suites and two manual checks. `mise run test` runs all four suites in order, cheapest first.
+Three suites and two manual checks. `mise run test` runs all three in order, cheapest first.
 
 ```sh
 mise run test          # everything
 mise run test:paths    # plugin id -> state path derivation (test/paths.test.js)
 mise run test:daemon   # daemon protocol over the real Unix socket (test/smoke.js)
-mise run test:bundle   # the same, against the committed daemon bundle
 mise run test:ui       # widget and panel, rendered headlessly (test/qsmcp/check.py)
 ```
 
@@ -26,9 +25,8 @@ without them whatever created it (a t3code thread, `EnterWorktree`, `wtnew`), so
 hook in `.claude/settings.json` says so when it sees a worktree with no `node_modules`. It only
 reminds; provisioning stays a command someone runs.
 
-Also assumed present: `node`, `rsync`, `mise`, `uv` (fetches the harness; no Python install of your
-own), and `bun` as a dev-time build tool, never a runtime. Omarchy supplies `qs`, `qmllint`, and
-`omarchy plugin`.
+Also assumed present: `node`, `npm`, `rsync`, `mise`, and `uv` (fetches the harness; no Python
+install of your own). Omarchy supplies `qs`, `qmllint`, and `omarchy plugin`.
 
 ## The manual checks
 
@@ -38,11 +36,9 @@ omarchy plugin validate .          # manifest + plugin folder
 ```
 
 `qmllint` warns about unresolved `qs.Ui` and `Quickshell` imports outside the shell tree. That is
-expected. `omarchy plugin validate` needs no `node_modules` anywhere in the tree, so run it from a
-fresh clone; bun's workspace linker gives `daemon/` and `test/` their own `node_modules` too.
-
-Any change under `daemon/` re-runs `bun run bundle` and commits the resulting
-`daemon/dist/omaimsg-daemon.cjs` in the same round, so `test:bundle` stays honest.
+expected. `omarchy plugin validate` rejects symlinks anywhere in the tree, and npm's workspace linker puts
+one in `node_modules/` for each workspace, so run it from a fresh clone rather than a provisioned
+checkout.
 
 ## What the UI checks cover
 

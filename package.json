@@ -5,8 +5,5 @@
   "workspaces": [
     "daemon",
     "test"
-  ],
-  "scripts": {
-    "bundle": "bun build daemon/index.js --target=node --format=cjs --outfile=daemon/dist/omaimsg-daemon.cjs"
-  }
+  ]
 }
