@@ -415,10 +415,15 @@ function normalizeLastMessage(bbMessage) {
   return { text, ts, fromMe }
 }
 
+// Stands in for a message whose only content is attachments, so a preview or a
+// non-image attachment renders something. lib/notify.js recognises it to say
+// something readable in a toast instead.
+export const ATTACHMENT_PLACEHOLDER = '[attachment]'
+
 function messageText(bbMessage) {
   const text = (bbMessage.text || '').trim()
   if (text) return text
-  if (bbMessage.attachments?.length) return '[attachment]'
+  if (bbMessage.attachments?.length) return ATTACHMENT_PLACEHOLDER
   return ''
 }
 

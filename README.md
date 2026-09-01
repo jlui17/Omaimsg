@@ -98,6 +98,8 @@ Every state path is named after the id with no exception, so give the copy its o
 
 Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the daemon holds, and `messagesPerThread` is also the page size it serves a thread in — the panel pages further back by scrolling to the top (`docs/daemon-protocol.md`).
 
+Optional `"notifications": false` silences the desktop notification an inbound message raises. It is a daemon setting rather than a manifest one because the daemon raises the toast, and manifest settings reach the QML only.
+
 Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon@io.omaimsg.service` if installed, else `setsid node <plugin-dir>/daemon/index.js`). The unit `install.sh` writes is the template in `systemd/`, with `%i` standing for both the plugin id and the directory it is installed under, so one file serves any number of installs. It passes its instance through as `Environment=OMAIMSG_PLUGIN_ID=%i`; without that the daemon binds the canonical paths while the widget waits on the variant's socket, and because `systemctl start` succeeded the widget never falls back to spawning its own. `ExecStart` is written with an absolute node path resolved at install time, because a systemd user unit's PATH does not include mise's shims. Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
 
 The panel renders from `~/.cache/io.omaimsg/cache.json` on a restart, so it comes up populated before BlueBubbles answers a fetch that pages the whole account. Delete it and the first open is slower; nothing else changes.
@@ -127,4 +129,4 @@ the other case and keeps one commit per item.
 
 ## POC scope
 
-Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple (reading a chat here does not mark it read on the Mac; that needs the Private API).
+Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. An inbound message raises a desktop notification through `omarchy-notification-send`, one per message, and clicking it opens the panel on that conversation. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple (reading a chat here does not mark it read on the Mac; that needs the Private API).

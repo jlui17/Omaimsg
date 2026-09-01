@@ -1,10 +1,11 @@
 # Testing
 
-Three suites and two manual checks. `mise run test` runs all three in order, cheapest first.
+Four suites and two manual checks. `mise run test` runs all four in order, cheapest first.
 
 ```sh
 mise run test          # everything
 mise run test:paths    # plugin id -> state path derivation (test/paths.test.js)
+mise run test:notify   # what an inbound message becomes on screen (test/notify.test.js)
 mise run test:daemon   # daemon protocol over the real Unix socket (test/smoke.js)
 mise run test:ui       # widget and panel, rendered headlessly (test/qsmcp/check.py)
 ```
@@ -40,6 +41,11 @@ expected. `omarchy plugin validate` rejects symlinks anywhere in the tree, and n
 one in `node_modules/` for each workspace, so run it from a fresh clone rather than a provisioned
 checkout.
 
+The daemon raises desktop notifications by shelling out to `omarchy-notification-send`. The daemon
+protocol suite gives the daemon a `PATH` holding nothing but a stub of that tool, which records the
+argv to a file. That is both how the notification assertions read what was raised and what keeps a
+suite run off your desktop.
+
 ## What the UI checks cover
 
 The protocol suites stop at the socket. `test/qsmcp/check.py` picks up where they stop, asserting
@@ -56,6 +62,12 @@ what the widget renders and how the panel answers the keyboard:
 - **The composer**: `i` focuses it, typing lands in it, `Enter` sends into the thread and clears it.
 - **Thread paging**: reaching the oldest end pages past the first page, pages join in timestamp
   order, and draining the thread ends exhausted without duplicating a message.
+- **The notification click target**: `qs ipc call -- io.omaimsg openChat <guid>`, the call a
+  notification's click action makes, opens the panel on that conversation from closed. It goes
+  through the real `IpcHandler` rather than the QML function behind it, because the declared function
+  name is the only thing joining the daemon's `--exec` argv to the panel. It also pins that the click
+  leaves the previously-open chat's unread alone, and that a click arriving before the chat list does
+  is held for the next one.
 
 `test:ui` re-stages first, so it never runs against a stale copy.
 

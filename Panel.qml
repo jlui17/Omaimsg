@@ -24,6 +24,8 @@ Panel {
   // -1 when the thread body has no message selected
   property int messageIndex: -1
   property string cursorFollowGuid: ""
+  // A notification click whose chat the list does not hold yet.
+  property string openFollowGuid: ""
   property string statusLine: ""
   property bool searching: false
   // "search" | "chats" | "messages" | "composer"
@@ -362,6 +364,40 @@ Panel {
       root.client.markRead(chat.guid)
     }
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+  }
+
+  // Opened from outside the panel, by guid: a notification click. The thread is
+  // chosen before the panel is shown, never after: showing it flips `opened`
+  // synchronously, and onOpenedChanged marks whatever thread is still active
+  // read, so opening first would clear the unread of the chat the reader last
+  // had open and never saw.
+  function openChatGuid(guid) {
+    if (!root.selectThread(guid)) root.openFollowGuid = guid
+    root.open()
+  }
+
+  // Looked up in the full list rather than `visibleChats`, so a search or
+  // unread filter left up from a previous visit cannot hide the thread the
+  // toast points at.
+  function selectThread(guid) {
+    var list = root.chats || []
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i] || list[i].guid !== guid) continue
+      root.openThread(list[i])
+      return true
+    }
+    return false
+  }
+
+  // A toast outlives a shell restart, so a click can arrive before the first
+  // `chats` frame does. One shot: the next frame either carries the chat or the
+  // click is dropped, so a guid that never arrives cannot open a thread later
+  // at a moment the reader has moved on from.
+  onChatsChanged: {
+    if (!root.openFollowGuid.length) return
+    var guid = root.openFollowGuid
+    root.openFollowGuid = ""
+    root.selectThread(guid)
   }
 
   function activateCursor() {

@@ -139,15 +139,17 @@
   <text class="eNote"  x="268" y="368">ask a question, get an answer</text>
   <text class="eNote"  x="268" y="386">news goes out to every panel</text>
 
-  <rect class="node" rx="12" x="70" y="410" width="360" height="150" stroke="#9ece6a"/>
+  <rect class="node" rx="12" x="70" y="410" width="360" height="180" stroke="#9ece6a"/>
   <text class="nTitle" x="94" y="444">omaimsg daemon &#183; Node</text>
   <text class="nRole"  x="94" y="467">Does the talking, holds the truth. One of it.</text>
   <text class="nFiles" x="94" y="498" fill="#9ece6a">index.js &#183; bus &#183; store</text>
   <text class="nFiles" x="94" y="520" fill="#9ece6a">bluebubbles &#183; contacts</text>
   <text class="nFiles" x="94" y="542" fill="#9ece6a">pins &#183; paths</text>
+  <text class="nFiles" x="94" y="564" fill="#9ece6a">notify</text>
   <text class="nRole"  x="410" y="498" text-anchor="end">route, fan out, remember</text>
   <text class="nRole"  x="410" y="520" text-anchor="end">the only Apple-shaped code</text>
   <text class="nRole"  x="410" y="542" text-anchor="end">the only things we save</text>
+  <text class="nRole"  x="410" y="564" text-anchor="end">the only way we reach the desktop</text>
 
   <path class="edge" d="M430,470 L512,470 L512,300 L600,300" marker-end="url(#a)" marker-start="url(#b)"/>
   <text class="eLabel" x="524" y="378">HTTP + Socket.IO</text>
@@ -210,10 +212,13 @@
     <p>If the daemon isn't running, the plugin starts it and reconnects. The daemon itself
     never starts a client, never addresses one in particular, and never depends on one
     being there.</p>
+    <p>Desktop notifications follow from the same rule. There is one panel per screen, so a
+    toast raised by the plugin would arrive once per screen; the daemon raises it, once,
+    and the plugin never does.</p>
     <div class="tell"><span class="h">Something's off if you see</span>
       state stored per client &#183; a counter that belongs to one connection &#183; the
       daemon assuming there is exactly one panel &#183; any calculation that would give two
-      panels different answers.</div>
+      panels different answers &#183; a <code>.qml</code> file raising a notification.</div>
   </div>
 </details>
 
@@ -533,7 +538,8 @@
 <span class="k">daemon/lib/bluebubbles.js</span>  everything Apple-facing                  (3)
 <span class="k">daemon/lib/contacts.js</span>     turns an address into a name
 <span class="k">daemon/lib/pins.js</span>         the one thing we keep between runs
-<span class="k">daemon/lib/paths.js</span>        every path we write, in one file          (12)</pre>
+<span class="k">daemon/lib/paths.js</span>        every path we write, in one file          (12)
+<span class="k">daemon/lib/notify.js</span>       what a new message looks like on your desktop  (2)</pre>
   </div>
 </details>
 
@@ -548,6 +554,7 @@
     <div class="flow"><div class="n">2</div><div class="who w-daemon">daemon</div><div class="what">throws it away if we already forwarded that id <b>(8)</b>, looks up the sender's name, adds one to unread <b>(11)</b>, updates the chat preview <b>(10)</b> and the list order <b>(9)</b>.</div></div>
     <div class="flow"><div class="n">3</div><div class="who w-daemon">daemon</div><div class="what">sends one <code>message</code> frame to <b>every</b> panel, with the message, the updated chat row, and the new total <b>(5)</b>.</div></div>
     <div class="flow"><div class="n">4</div><div class="who w-plugin">plugin</div><div class="what">adds the row and updates the badge. One of only two frames that add rather than replace <b>(7)</b>.</div></div>
+    <div class="flow"><div class="n">5</div><div class="who w-daemon">daemon</div><div class="what">raises one desktop notification, after the frame has gone out and never for your own messages <b>(2)</b>. Clicking it asks the bar widget to open that chat.</div></div>
   </div>
 </details>
 

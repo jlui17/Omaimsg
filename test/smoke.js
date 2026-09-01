@@ -25,6 +25,13 @@ const runtimeDir = path.join(os.tmpdir(), `omaimsg-smoke-run-${process.pid}`)
 const stateHome = path.join(os.tmpdir(), `omaimsg-smoke-state-${process.pid}`)
 const cacheHome = path.join(os.tmpdir(), `omaimsg-smoke-cache-${process.pid}`)
 const PLUGIN_ID = 'io.omaimsg'
+// The daemon shells out to omarchy-notification-send. This directory is the
+// daemon's WHOLE PATH for the run, holding a stub of that tool which records the
+// argv instead of raising anything. Prepending it to the real PATH would not do:
+// the real tool is on it, so removing the stub would reach the real one and put
+// toasts on the desktop of whoever ran the suite.
+const notifyBinDir = path.join(os.tmpdir(), `omaimsg-smoke-notifybin-${process.pid}`)
+const notifyLogPath = path.join(notifyBinDir, 'raised.ndjson')
 const sandbox = { XDG_RUNTIME_DIR: runtimeDir, XDG_STATE_HOME: stateHome, XDG_CACHE_HOME: cacheHome }
 // Where the daemon under test will put things, asked of the same function it
 // asks, so this file holds no second copy of the naming rules.
@@ -223,7 +230,9 @@ async function settledUnread(client, chatGuid, timeoutMs = 6000) {
 
 async function startDaemon() {
   const child = trackSpawn(
-    spawn('node', ['daemon/index.js'], {
+    // process.execPath, not 'node': the PATH below holds only the notification
+    // stub, so the name 'node' would not resolve for the daemon's own spawn.
+    spawn(process.execPath, ['daemon/index.js'], {
       cwd: repoRoot,
       // A page size (3) far smaller than the canned chat list forces every
       // `chats` command through the daemon's multi-page fetch for the whole
@@ -233,7 +242,8 @@ async function startDaemon() {
         OMAIMSG_CONFIG: configPath,
         OMAIMSG_PLUGIN_ID: PLUGIN_ID,
         ...sandbox,
-        OMAIMSG_CHAT_PAGE_SIZE: '3'
+        OMAIMSG_CHAT_PAGE_SIZE: '3',
+        PATH: notifyBinDir
       },
       stdio: ['ignore', 'ignore', 'inherit']
     }),
@@ -277,6 +287,34 @@ async function mockControl(route, body) {
   return res.json()
 }
 
+function stubNotificationTool() {
+  mkdirSync(notifyBinDir, { recursive: true })
+  writeFileSync(notifyLogPath, '')
+  writeFileSync(
+    path.join(notifyBinDir, 'omarchy-notification-send'),
+    // An absolute interpreter, not `/usr/bin/env node`: the daemon's PATH holds
+    // only this directory, so `env` could not find node either.
+    `#!${process.execPath}\nrequire('fs').appendFileSync(${JSON.stringify(notifyLogPath)}, JSON.stringify(process.argv.slice(2)) + '\\n')\n`,
+    { mode: 0o755 }
+  )
+}
+
+function raisedNotifications() {
+  return readFileSync(notifyLogPath, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line))
+}
+
+// The spawn is detached and nothing on the socket reports it, so the only way to
+// read what was raised is to wait out a window and look. It has to be long
+// enough that a second toast for the same message would have landed inside it,
+// or "exactly one" would pass on a race. Sliced from a baseline because the run
+// raises plenty of toasts before any of these assertions.
+function notificationsSince(baseline) {
+  return sleep(1200).then(() => raisedNotifications().slice(baseline))
+}
+
 // Contact loading happens off the socket "connect" event in the background,
 // so the very first `chats` reply can race it; poll instead of asserting once.
 async function waitForChatName(client, chatGuid, expectedName, timeoutMs = 3000) {
@@ -305,7 +343,7 @@ function cleanup() {
   } catch {
     // Already gone.
   }
-  for (const dir of [stateHome, cacheHome, runtimeDir]) {
+  for (const dir of [stateHome, cacheHome, runtimeDir, notifyBinDir]) {
     try {
       rmSync(dir, { force: true, recursive: true })
     } catch {
@@ -333,6 +371,7 @@ async function main() {
   }))
 
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
+  stubNotificationTool()
 
   let daemon = await startDaemon()
 
@@ -936,6 +975,98 @@ async function main() {
     missingCursor !== null && missingCursor.chatGuid === pageChat,
     JSON.stringify(missingCursor)
   )
+
+  // Notifications are the daemon's, not the plugin's: the plugin runs one client
+  // per monitor, so a plugin-side toast would fire once per screen. Nothing on
+  // the socket reports one, so the stub tool's argv log is the only witness.
+  const notifyBaseline = raisedNotifications().length
+  const notifyTarget = CONTACT_TEST_CHATS[0].guid
+  const notifyText = 'notify me once'
+  await mockControl('push-message', { chatGuid: notifyTarget, text: notifyText })
+  const notifyPush = await client.waitFor((f) => f.t === 'message' && f.message.text === notifyText)
+  const afterPush = await notificationsSince(notifyBaseline)
+  const forPush = afterPush.filter((argv) => argv.includes(notifyText))
+  report(
+    'an inbound message raises exactly one notification',
+    forPush.length === 1,
+    JSON.stringify(afterPush)
+  )
+
+  const notifyArgv = forPush[0] || []
+  const execAt = notifyArgv.indexOf('--exec')
+  report(
+    'the notification titles the sender and bodies the message',
+    execAt > 1 && notifyArgv[execAt - 2] === notifyPush.message.sender && notifyArgv[execAt - 1] === notifyText,
+    JSON.stringify(notifyArgv)
+  )
+  // Its own argv element, never interpolated into a string: a chat guid arrives
+  // from BlueBubbles and a click runs this vector.
+  report(
+    'the chat guid rides behind --exec as its own argv element',
+    JSON.stringify(notifyArgv.slice(execAt + 1)) === JSON.stringify(['omarchy-shell', PLUGIN_ID, 'openChat', notifyTarget]),
+    JSON.stringify(notifyArgv)
+  )
+  // Messaging apps stack; a replace-id would collapse a burst into one toast.
+  report(
+    'nothing replaces an earlier toast',
+    !notifyArgv.includes('-r') && !notifyArgv.includes('--replace-id'),
+    JSON.stringify(notifyArgv)
+  )
+
+  // BlueBubbles re-emits a guid it has already sent; the session drops the
+  // repeat, and this is the guard that the drop keeps covering notifications.
+  await mockControl('reemit-message', { chatGuid: notifyTarget })
+  const afterReemit = await notificationsSince(notifyBaseline)
+  report(
+    'a repeat push of an already-forwarded guid raises no second notification',
+    afterReemit.filter((argv) => argv.includes(notifyText)).length === 1,
+    JSON.stringify(afterReemit)
+  )
+
+  // `text` is the message this run sent itself, earlier; BlueBubbles echoed it
+  // back over the socket and the daemon forwarded that echo to every client.
+  report(
+    'an own send never notifies, its socket echo included',
+    !raisedNotifications().some((argv) => argv.includes(text)),
+    JSON.stringify(raisedNotifications())
+  )
+
+  const groupText = 'notify the group'
+  await mockControl('push-message', { chatGuid: UNNAMED_GROUP_TEST_CHAT.guid, text: groupText })
+  const groupPush = await client.waitFor((f) => f.t === 'message' && f.message.text === groupText)
+  const afterGroup = await notificationsSince(notifyBaseline)
+  report(
+    'a group notification titles the group and prefixes the sender',
+    afterGroup.some((argv) =>
+      argv.includes(groupPush.chat.name) && argv.includes(`${groupPush.message.sender}: ${groupText}`)),
+    JSON.stringify(afterGroup)
+  )
+
+  // omarchy-notification-send option-parses both of its positional slots and
+  // offers no `--` escape, so a body that is exactly one of its flags is read as
+  // that flag and the call exits non-zero. Verified against a real Omarchy
+  // install: a message of "-g" raised no toast at all. A leading space is not a
+  // flag, and is invisible in the toast.
+  const flagText = '-g'
+  await mockControl('push-message', { chatGuid: notifyTarget, text: flagText })
+  await client.waitFor((f) => f.t === 'message' && f.message.text === flagText)
+  const afterFlag = await notificationsSince(notifyBaseline)
+  report(
+    'a message that is exactly one of the tool\'s flags still reaches it as text',
+    afterFlag.some((argv) => argv.includes(` ${flagText}`)),
+    JSON.stringify(afterFlag)
+  )
+
+  // Last, because it takes the stub away for good: with the tool gone the spawn
+  // fails, and an unhandled 'error' on a child process is how that kills the
+  // whole daemon rather than one toast.
+  rmSync(path.join(notifyBinDir, 'omarchy-notification-send'))
+  await mockControl('push-message', { chatGuid: notifyTarget, text: 'no tool to raise this' })
+  await client.waitFor((f) => f.t === 'message' && f.message.text === 'no tool to raise this')
+  await sleep(500)
+  client.send({ t: 'ping' })
+  const aliveFrame = await client.waitFor((f) => f.t === 'pong', 3000).catch(() => null)
+  report('a notification that cannot be raised leaves the daemon serving', aliveFrame !== null)
 
   client.send({ t: 'ping' })
   const pongFrame = await client.waitFor((f) => f.t === 'pong')

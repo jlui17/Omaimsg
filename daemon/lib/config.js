@@ -40,6 +40,9 @@ export function loadConfig() {
     serverUrl: String(parsed.serverUrl).replace(/\/+$/, ''),
     password: String(parsed.password),
     method: parsed.method === 'private-api' ? 'private-api' : DEFAULT_METHOD,
+    // Opt-out rather than opt-in: a messaging app that stays silent until
+    // someone configures it reads as broken.
+    notifications: parsed.notifications !== false,
     cache: {
       threads: positiveInt(parsed.cache?.threads),
       pageSize: positiveInt(parsed.cache?.messagesPerThread)
@@ -49,7 +52,7 @@ export function loadConfig() {
 
 export function logConfigOutcome(config) {
   if (config.ok) {
-    logger.info(`config loaded from ${configPath}`, { serverUrl: config.serverUrl, method: config.method })
+    logger.info(`config loaded from ${configPath}`, { serverUrl: config.serverUrl, method: config.method, notifications: config.notifications })
   } else {
     logger.warn(`config: ${config.error}`)
   }

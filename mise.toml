@@ -10,9 +10,10 @@ description = "Provision a fresh checkout or worktree with the dependencies the 
 run = "npm ci"
 
 [tasks.test]
-description = "Every check: path derivation, daemon protocol, then the UI"
+description = "Every check: path derivation, notification shaping, daemon protocol, then the UI"
 run = [
   "mise run test:paths",
+  "mise run test:notify",
   "mise run test:daemon",
   "mise run test:ui",
 ]
@@ -20,6 +21,10 @@ run = [
 [tasks."test:paths"]
 description = "The plugin id -> state path derivation, in isolation"
 run = "node --test test/paths.test.js"
+
+[tasks."test:notify"]
+description = "What an inbound message turns into on screen, in isolation"
+run = "node --test test/notify.test.js"
 
 [tasks."test:daemon"]
 description = "Daemon protocol end to end over the real Unix socket"

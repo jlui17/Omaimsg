@@ -70,6 +70,7 @@ BarWidget {
   function open() { if (panelLoader.item) panelLoader.item.open() }
   function close() { if (panelLoader.item) panelLoader.item.close() }
   function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
+  function openChat(chatGuid) { if (panelLoader.item) panelLoader.item.openChatGuid(chatGuid) }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
 
   function injectPanel() {
@@ -117,6 +118,9 @@ BarWidget {
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }
+    // A guid rather than a list position: the list reorders between the
+    // message landing and the toast being clicked.
+    function openChat(chatGuid: string): void { root.openChat(chatGuid) }
   }
 
   Loader {

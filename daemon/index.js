@@ -2,17 +2,19 @@ import { existsSync } from 'node:fs'
 import { copyFile } from 'node:fs/promises'
 
 import { loadConfig, logConfigOutcome } from './lib/config.js'
-import { attachmentPath, socketPath } from './lib/paths.js'
+import { attachmentPath, pluginId, socketPath } from './lib/paths.js'
 import { logger } from './lib/logger.js'
 import { Bus } from './lib/bus.js'
 import { Store } from './lib/store.js'
 import { BlueBubblesSession } from './lib/bluebubbles.js'
+import { Notifier } from './lib/notify.js'
 
 const config = loadConfig()
 logConfigOutcome(config)
 
 const bus = new Bus(socketPath)
 const store = new Store(config.cache)
+const notifier = new Notifier({ enabled: config.notifications === true, pluginId })
 
 let connection = config.ok ? 'connecting' : 'error'
 let lastError = config.ok ? '' : config.error
@@ -83,6 +85,7 @@ if (config.ok) {
     const cached = store.upsertFromMessage(chat, message)
     store.appendToThread(chatGuid, message)
     bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.unreadChats() })
+    notifier.post({ chatGuid, chat: cached, message })
   }
 
   session.start()

@@ -219,6 +219,22 @@ const server = createServer(async (req, res) => {
       return
     }
 
+    // Re-emits a chat's newest message under the guid it already went out with,
+    // which is what the real server does for an echo. Nothing is added to the
+    // store, so only the duplicate drop decides what the daemon does with it.
+    if (req.method === 'POST' && url.pathname === '/__test/reemit-message') {
+      const { chatGuid } = await readBody(req)
+      const list = messages.get(chatGuid)
+      const last = list?.[list.length - 1]
+      if (!last) {
+        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
+        return
+      }
+      sendJson(res, 200, envelope(last))
+      io.emit('new-message', last)
+      return
+    }
+
     // Mirrors MessageRepository.getMessages: `handle` is left-joined so a
     // where clause on it reaches messages with no chat link, and chat.db's
     // address column is `id`.

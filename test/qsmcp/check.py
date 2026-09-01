@@ -54,6 +54,19 @@ def keys(*args: str) -> None:
     subprocess.run(["wtype", "-s", "300", *args, "-s", "300"], env=env, check=True)
 
 
+def ipc(*args: str) -> str:
+    # Through the real IpcHandler, the way a notification's click action reaches
+    # it. The function name declared in BarWidget.qml is the only thing joining
+    # the daemon's --exec argv to the panel; calling the QML function behind the
+    # handler instead would leave a rename to break silently.
+    h = srv.HARNESS
+    done = subprocess.run(
+        h._ipc_argv("call", "--", *args),
+        env=h._launch_env, capture_output=True, text=True, timeout=15, check=False,
+    )
+    return f"exit={done.returncode} {done.stdout.strip()} {done.stderr.strip()}".strip()
+
+
 def q(node: str, body: str) -> str:
     return f"(function(){{var x={node}; if(!x) return null; {body} }})()"
 
@@ -274,6 +287,64 @@ def run(d: Driver) -> None:
     drained = d.eval(q(PANEL, "return (x.messages||[]).map(function(m){return m.guid;});"))
     d.eq("the inclusive cut never duplicates a message", len(drained), len(set(drained)))
     d.check("draining only ever adds", len(drained) >= len(rows))
+
+    d.section("notification click target")
+    # What a daemon notification's --exec reaches: the bar widget's openChat IPC
+    # function, called here directly since qs ipc only forwards to it. The guid
+    # is a chat other than the open one, and the panel starts closed, so neither
+    # answer can be left over from the paging walk above.
+    click_target = next(g for g in served if g != d.eval(q(PANEL, "return x.activeGuid;")))
+    d.eval(q(BAR, "x.close(); return true;"))
+    wait_for(d, q(BAR, "return x.opened;"), lambda v: v is False)
+    reply = ipc(CANONICAL_ID, "openChat", click_target)
+    d.check(
+        f"the widget answers an openChat IPC call under its own id ({reply})",
+        reply.startswith("exit=0") and "not found" not in reply.lower() and "arguments" not in reply.lower(),
+    )
+    landed = wait_for(
+        d,
+        q(PANEL, "return [x.opened, x.activeGuid];"),
+        lambda v: isinstance(v, list) and v[1] == click_target,
+    )
+    d.eq("openChat opens the panel", landed[0], True)
+    d.eq("openChat opens the conversation it was given", landed[1], click_target)
+
+    # Showing the panel flips `opened` synchronously, and onOpenedChanged marks
+    # whatever thread is still active read. A click that showed the panel before
+    # choosing its thread would clear the unread of the chat the reader last had
+    # open, which they never saw. markRead mirrors that locally, so the client's
+    # own copy is the witness.
+    stale = d.eval(q(PANEL, "return x.activeGuid;"))
+    d.eval(q(BAR, "x.close(); return true;"))
+    wait_for(d, q(BAR, "return x.opened;"), lambda v: v is False)
+    d.eval(q(CLIENT, f"""
+        var list = (x.chats||[]).slice();
+        for (var i=0;i<list.length;i++) if (list[i].guid==={stale!r})
+          list[i] = Object.assign({{}}, list[i], {{unread: 4}});
+        x.setChats(list); return true;"""))
+    other = next(g for g in served if g != stale)
+    ipc(CANONICAL_ID, "openChat", other)
+    wait_for(d, q(PANEL, "return x.activeGuid;"), lambda v: v == other)
+    kept = d.eval(q(CLIENT, f"""
+        var list = x.chats||[];
+        for (var i=0;i<list.length;i++) if (list[i].guid==={stale!r}) return list[i].unread;
+        return null;"""))
+    d.eq("opening one chat from a toast leaves the last one's unread alone", kept, 4)
+
+    # A toast outlives a shell restart, so a click can land before the first
+    # `chats` frame does. The guid is held and spent on the next one.
+    saved = d.eval(q(CLIENT, "return JSON.stringify(x.chats||[]);"))
+    d.eval(q(BAR, "x.close(); return true;"))
+    d.eval(q(CLIENT, "x.setChats([]); return true;"))
+    ipc(CANONICAL_ID, "openChat", stale)
+    d.eq(
+        "a click with no chat list yet is held, not dropped",
+        d.eval(q(PANEL, "return x.openFollowGuid;")),
+        stale,
+    )
+    d.eval(q(CLIENT, f"x.setChats(JSON.parse({saved!r})); return true;"))
+    arrived = wait_for(d, q(PANEL, "return x.activeGuid;"), lambda v: v == stale)
+    d.eq("the held click is spent on the next chat list", arrived, stale)
 
 
 def main() -> int:

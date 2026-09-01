@@ -69,3 +69,11 @@ Both sizes come from the daemon's config (`~/.config/<plugin id>/config.json`), 
 ```
 
 `messagesPerThread` is one number doing two jobs on purpose: it is both the page the daemon serves and the tail it caches, so a warm thread open can never come up short of what the client just asked for. Omit `cache`, or either key, to take the defaults above.
+
+## Notifications
+
+The daemon raises the desktop notification for an inbound message, and the plugin must not. Two reasons: the daemon is the one component guaranteed to be running (the shell can restart under it), and the plugin runs one client per monitor, so a plugin-side toast would fire once per screen. A `message` frame therefore carries no instruction to notify, and a client that sees one has nothing to do about it.
+
+One toast per inbound message, never stacked or replaced. It goes out through `omarchy-notification-send`, and its click action is `omarchy-shell <plugin id> openChat <chat guid>` — the plugin's bar widget exposes `openChat` alongside `open`, `close` and `toggle` for exactly this. The body is the message's own text, collapsed to one line and otherwise whole: Omarchy's toast card wraps and elides it, so cutting it here would only move the ellipsis earlier. A message whose only content is attachments says what they are and how many ("Sent a photo", "Sent 3 attachments") rather than the `[attachment]` placeholder the panel renders. Own sends never notify, the socket echo included, and neither does a message with no text and no attachments (a tapback, a group event) because there is nothing to put in the toast. Nothing is suppressed based on which chat is on screen: the daemon has no live focus signal, and a `read` frame is not one.
+
+Set `"notifications": false` in the daemon's config to silence them. It lives there and not in the manifest because manifest settings reach the QML only, and the daemon has no channel to them.

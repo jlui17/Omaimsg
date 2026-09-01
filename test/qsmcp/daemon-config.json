@@ -1,4 +1,5 @@
 {
   "password": "testpass",
-  "cache": { "threads": 30, "messagesPerThread": 5 }
+  "cache": { "threads": 30, "messagesPerThread": 5 },
+  "notifications": false
 }
