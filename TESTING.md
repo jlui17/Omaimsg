@@ -124,11 +124,18 @@ fails to load on each boot.
 `test/qsmcp/shell.json` is the staged bar layout. It sets `autostartDaemon: false`, because the
 harness owns the daemon.
 
-To see what rendered, capture the compositor while the harness is up:
+To see what rendered, capture the compositor while the harness is up. Name the harness's runtime
+dir; `shot.sh` captures that one and nothing else:
 
 ```sh
-./test/qsmcp/shot.sh /tmp/bar.png
+./test/qsmcp/shot.sh "$XDG_RUNTIME_DIR_OF_THE_HARNESS" /tmp/bar.png
 ```
+
+The harness object carries the dir (`srv.HARNESS._xdg`, which `check.py` already reads to point
+`wtype` at the right compositor). Over MCP, ask the app itself:
+`qml_eval("Quickshell.env('XDG_RUNTIME_DIR')")`. `shot.sh` deliberately does not go looking: a
+harness runs per worktree, so a script that scanned `/tmp` would capture a sibling's compositor and
+exit 0, and a plausible screenshot of someone else's build is worse than no screenshot.
 
 The probe's own `screenshot()` cannot grab an Omarchy bar, because it requires the window's content
 item to have exactly one visual child and `BarPanel` has two. Capturing the compositor also records
