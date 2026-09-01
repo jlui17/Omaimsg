@@ -96,9 +96,19 @@ Every state path is named after the id with no exception, so give the copy its o
 { "serverUrl": "http://<mac-ip>:1234", "password": "<bluebubbles server password>" }
 ```
 
-Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the daemon holds in memory, and `messagesPerThread` is also the page size it serves a thread in — the panel pages further back by scrolling to the top (`docs/daemon-protocol.md`).
+Optional `"cache": { "threads": 30, "messagesPerThread": 60 }` sets how much the daemon holds, and `messagesPerThread` is also the page size it serves a thread in — the panel pages further back by scrolling to the top (`docs/daemon-protocol.md`).
 
 Then `node daemon/index.js` (the plugin also autostarts it: `omaimsg-daemon@io.omaimsg.service` if installed, else `setsid node <plugin-dir>/daemon/index.js`). The unit `install.sh` writes is the template in `systemd/`, with `%i` standing for both the plugin id and the directory it is installed under, so one file serves any number of installs. It passes its instance through as `Environment=OMAIMSG_PLUGIN_ID=%i`; without that the daemon binds the canonical paths while the widget waits on the variant's socket, and because `systemctl start` succeeded the widget never falls back to spawning its own. `ExecStart` is written with an absolute node path resolved at install time, because a systemd user unit's PATH does not include mise's shims. Sending uses BlueBubbles' `apple-script` method by default (no Private API/SIP setup needed on the Mac); set `"method": "private-api"` in the config if the server has it enabled.
+
+The panel renders from `~/.cache/io.omaimsg/cache.json` on a restart, so it comes up populated before BlueBubbles answers a fetch that pages the whole account. Delete it and the first open is slower; nothing else changes.
+
+### What the unread badge counts
+
+The bar badge counts **conversations** with something unread; a chat's own badge counts its unread **messages**, so the two do not add up to each other.
+
+A message is unread when it is newer than the chat's read boundary, which is the later of what Apple says the account has seen and what you have opened here. The first half is re-derived from the server on every daemon start. The second is a timestamp per chat in `~/.local/state/io.omaimsg/read-state.json`, which is why opening a chat here keeps it read across restarts — and why deleting that file makes chats unread again.
+
+Reading a chat here cannot mark it read on the Mac: that needs the Private API this setup does not use. It also runs the other way — reading a chat on an iPhone does not stamp a read date on the Mac's copy of an incoming message. Apple's own "last seen" marker catches most of those, but it syncs from a phone only sometimes, so it is allowed to clear a chat and never to raise one. Whatever it misses stays unread until you open the chat here once.
 
 ## Contributing
 
@@ -117,4 +127,4 @@ the other case and keeps one commit per item.
 
 ## POC scope
 
-Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple (reading a chat here does not mark it read on the Mac; that needs the Private API), message cache persistence.
+Text messages and inline images (thumbnail-sized, cached under `~/.cache/omaimsg/`); clicking an image opens it in the system viewer, thumbnail first, upgrading in place once the full-size download lands. URLs in message text render as links and open in the browser on click. Non-image attachments render as `[attachment]`. Deferred, not dropped: tapbacks, typing indicators, read-receipt sync back to Apple (reading a chat here does not mark it read on the Mac; that needs the Private API).

@@ -75,7 +75,7 @@ const SEEN_MESSAGE_GUIDS = 500
 // How far back a seed scan reads to find the end of a chat's unread run. Past
 // this the run is reported as the scan length: a chat nobody has touched in a
 // hundred messages is already saying "lots".
-const UNREAD_SCAN_LIMIT = 100
+export const UNREAD_SCAN_LIMIT = 100
 
 // Both transports plus the contact index behind one interface: callers get
 // protocol-shaped Chat/Message objects and a connection state, never a
@@ -183,8 +183,8 @@ export class BlueBubblesSession {
     return raw.map((chat) => normalizeChat(chat, this.contacts))
   }
 
-  async unreadCounts() {
-    return this.client.unreadCounts()
+  async unreadRuns() {
+    return this.client.unreadRuns()
   }
 
   // chat.db can hold messages with no chat link at all, and every chat-scoped
@@ -270,31 +270,51 @@ class BlueBubblesClient {
     return all.slice(0, CHAT_FETCH_CAP)
   }
 
-  // BlueBubbles exposes no unread field, and iMessage's own boundary
-  // (chat.last_read_message_timestamp) is not serialized on a chat, so a
-  // message's `dateRead` is the only readable signal -- and it is trustworthy
-  // only per chat. A chat that has never recorded a read on any inbound
-  // message never tracked read state at all, so a missing dateRead there says
-  // nothing; verified on a real account, where 27 of 38 candidate chats were
-  // that case (mostly one-message threads years old). Where a chat HAS
-  // recorded reads, the unread run at its end is real.
-  async unreadCounts() {
-    const counts = {}
+  // Two signals, both unreliable, and neither trusted alone. Measured against
+  // a real account on 2026-09-01:
+  //
+  // - A message's `dateRead` under-reports. Reading a chat on an iPhone does
+  //   not stamp it on the Mac's copy of an inbound message, so a chat read on
+  //   a phone reads as unread forever. It is also trustworthy only per chat: a
+  //   chat that has never recorded a read on any inbound message never tracked
+  //   read state at all, so a missing dateRead there says nothing (27 of 38
+  //   candidate chats, mostly one-message threads years old).
+  // - `properties[0].lastSeenMessageGuid` over-reports. It is the last message
+  //   the MAC has been shown, and it syncs from a phone only sometimes: taking
+  //   it as the boundary turned 2 unread chats into 19, with two group chats
+  //   claiming 51 and 62. Only about a quarter of chats carry it at all.
+  //
+  // So dateRead decides which chats are unread and the boundary may only ever
+  // shorten the answer, never create one. That is what fixes the case both the
+  // report and the fixtures are built on -- a chat the Mac has seen through its
+  // newest message, whose tail it never stamped -- without inventing a badge
+  // full of conversations nobody has failed to read.
+  //
+  // The boundary guid is resolved against the messages actually fetched rather
+  // than compared with `lastMessage.guid`: chat/query's lastMessage is not
+  // reliably the newest one (measured: it returned the third-newest for a chat
+  // whose newest three landed in the same second), and this file already
+  // refuses to trust that route's ranking.
+  //
+  // Returns the timestamps of each chat's trailing unread messages, not a
+  // count, so the caller can re-derive a count against a read boundary of its
+  // own without asking the server again.
+  async unreadRuns() {
+    const runs = {}
     for (const chat of await this.queryAllChatsRaw()) {
       const last = chat.lastMessage
       if (!last || last.isFromMe || last.dateRead) continue
       const messages = await this._request(`/api/v1/chat/${encodeURIComponent(chat.guid)}/message`, {
         query: { limit: UNREAD_SCAN_LIMIT, sort: 'DESC' }
       })
-      if (!messages.some((m) => !m.isFromMe && m.dateRead)) continue
-      let unread = 0
-      for (const message of messages) {
-        if (message.isFromMe || message.dateRead) break
-        unread += 1
-      }
-      if (unread > 0) counts[chat.guid] = unread
+      let run = runBeforeFirstRead(messages)
+      const boundaryGuid = chat.properties?.[0]?.lastSeenMessageGuid
+      // Both runs start at the newest message, so the shorter prefix is the
+      // one the two signals agree on.
+      if (boundaryGuid) run = run.slice(0, countAfterBoundary(messages, boundaryGuid))
+      if (run.length) runs[chat.guid] = run
     }
-    return counts
+    return runs
   }
 
   async getChatMessages(chatGuid, limit, contactIndex = EMPTY_CONTACT_INDEX, beforeTs) {
@@ -416,7 +436,7 @@ function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   return {
     guid: bbMessage.guid,
     text: messageText(bbMessage),
-    ts: bbMessage.dateCreated ?? bbMessage.dateDelivered ?? Date.now(),
+    ts: messageTs(bbMessage),
     fromMe: !!bbMessage.isFromMe,
     sender: bbMessage.isFromMe ? '' : (contactIndex.resolve(rawSender) || rawSender),
     ...(attachments.length ? { attachments } : {}),
@@ -426,8 +446,43 @@ function normalizeMessage(bbMessage, contactIndex = EMPTY_CONTACT_INDEX) {
   }
 }
 
+// One rule for a message's timestamp, because an unread run and a normalized
+// message are compared against each other: a run holding a raw `dateCreated`
+// could carry undefined, and the read boundary derived from it is then NaN --
+// a chat that can never be marked read.
+function messageTs(bbMessage) {
+  return bbMessage.dateCreated ?? bbMessage.dateDelivered ?? Date.now()
+}
+
 // The chat a `new-message` socket push belongs to is embedded on the message
 // itself, because BlueBubbles serializes messages with includeChats on.
 function embeddedChat(bbMessage) {
   return bbMessage.chats?.[0]
+}
+
+// `messages` is newest-first. A message at or before the boundary has been
+// seen, so the count is everything newer than it that the account did not send.
+// A boundary the scan window does not reach counts the whole window, which
+// vetoes nothing -- the right answer when the boundary is that far behind is to
+// leave the other signal alone.
+function countAfterBoundary(messages, boundaryGuid) {
+  let count = 0
+  for (const message of messages) {
+    if (message.guid === boundaryGuid) break
+    if (!message.isFromMe) count += 1
+  }
+  return count
+}
+
+// A chat that has recorded a read on some inbound message is one where a
+// missing dateRead means unread rather than untracked; where it has not, this
+// says nothing and returns nothing.
+function runBeforeFirstRead(messages) {
+  if (!messages.some((m) => !m.isFromMe && m.dateRead)) return []
+  const run = []
+  for (const message of messages) {
+    if (message.isFromMe || message.dateRead) break
+    run.push(messageTs(message))
+  }
+  return run
 }

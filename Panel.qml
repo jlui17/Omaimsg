@@ -632,7 +632,7 @@ Panel {
                 if (root.statusLine.length > 0) return root.statusLine
                 if (root.view === "thread") return ""
                 var unread = root.client ? root.client.unread : 0
-                var label = unread > 0 ? unread + " unread" : ""
+                var label = unread > 0 ? unread + " unread conversation" + (unread === 1 ? "" : "s") : ""
                 if (!root.unreadOnly) return label
                 return label.length > 0 ? label + " · unread only" : "unread only"
               }

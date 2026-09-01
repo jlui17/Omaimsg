@@ -150,7 +150,12 @@ def run(d: Driver) -> None:
     )
     d.eval(q(VARIANT_CLIENT, "x.unread=0; return x.unread;"))
     d.eq("unread marks the button active", active, True)
-    d.eq("unread tooltip counts", tip, "Omaimsg · 3 unread")
+    # The badge counts conversations, not messages, so the tooltip says which:
+    # a chat's own badge holds its message count and the two do not sum.
+    d.eq("unread tooltip counts conversations", tip, "Omaimsg · 3 unread conversations")
+
+    _, _, tip = badge(1)
+    d.eq("one unread conversation is singular", tip, "Omaimsg · 1 unread conversation")
 
     text, _, _ = badge(150)
     d.eq("a count over 99 clamps", text, f"{GLYPH} 99+")

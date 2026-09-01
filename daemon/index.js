@@ -22,7 +22,7 @@ function state() {
     t: 'state',
     connection,
     serverUrl: config.ok ? config.serverUrl : '',
-    unread: store.totalUnread(),
+    unread: store.unreadChats(),
     lastError
   }
 }
@@ -72,36 +72,36 @@ if (config.ok) {
     pushState()
   }
 
-  // The Mac owns read state, so its verdict clears a chat outright rather than
-  // decrementing: reading on the phone marks the whole thread read at once.
+  // The Mac owns read state, so its verdict moves the boundary for the whole
+  // thread at once: reading on the phone marks everything read, not one message.
   session.onChatRead = (chatGuid) => {
-    const chat = store.chatList().find((c) => c.guid === chatGuid)
-    if (!chat || !chat.unread) return
-    store.markRead(chatGuid)
-    bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
+    if (!store.markRead(chatGuid)) return
+    bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.unreadChats() })
   }
 
   session.onMessage = ({ chatGuid, chat, message }) => {
     const cached = store.upsertFromMessage(chat, message)
     store.appendToThread(chatGuid, message)
-    bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.totalUnread() })
+    bus.broadcast({ t: 'message', chatGuid, message, chat: cached, unread: store.unreadChats() })
   }
 
   session.start()
   seedUnread()
 }
 
-// One scan at startup. It deliberately does not fetch the chat list: a store
-// that has never been swept is what tells a client its cached answer would be
-// a single pushed chat rather than the account, so the seed waits for the
-// first real sweep to attach itself to. Failure is logged and dropped -- the
-// badge then counts only what this daemon sees live, as it did before.
+// One scan at startup, which is also what re-derives unread after a restart:
+// no count is persisted, only the boundary a `read` moved. It deliberately does
+// not fetch the chat list: a store that has never been swept is what tells a
+// client its cached answer would be a single pushed chat rather than the
+// account, so the seed waits for the first real sweep to attach itself to.
+// Failure is logged and dropped -- the badge then counts only what this daemon
+// sees live, as it did before.
 async function seedUnread() {
   try {
-    store.seedUnread(await session.unreadCounts())
-    logger.info('unread: seeded from server', { unread: store.totalUnread() })
+    store.seedUnread(await session.unreadRuns())
+    logger.info('unread: seeded from server', { chats: store.unreadChats() })
     if (store.hasFullChatList())
-      bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
+      bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.unreadChats() })
     else pushState()
   } catch (err) {
     logger.warn('unread: seed failed, counting from live messages only', { err: err.message })
@@ -140,12 +140,12 @@ async function handleCommand(payload, reply) {
       // merely a non-empty map: a push can seed a single chat before any client
       // has asked for the list.
       const servedChats = store.hasFullChatList() ? page(store.chatList()) : null
-      if (servedChats) reply({ t: 'chats', chats: servedChats, unread: store.totalUnread() })
+      if (servedChats) reply({ t: 'chats', chats: servedChats, unread: store.unreadChats() })
       try {
         store.replaceChats(await session.chats())
         const fresh = page(store.chatList())
         if (!servedChats || JSON.stringify(servedChats) !== JSON.stringify(fresh))
-          reply({ t: 'chats', chats: fresh, unread: store.totalUnread() })
+          reply({ t: 'chats', chats: fresh, unread: store.unreadChats() })
       } catch (err) {
         // A client already holding a list keeps it rather than being told the
         // fetch failed; the `state` frame is what surfaces a BlueBubbles outage.
@@ -269,7 +269,7 @@ async function handleCommand(payload, reply) {
 
     case 'pin':
       store.setPinned(payload.chatGuid, !!payload.pinned)
-      bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.totalUnread() })
+      bus.broadcast({ t: 'chats', chats: store.chatList(), unread: store.unreadChats() })
       return
 
     default:
@@ -279,6 +279,7 @@ async function handleCommand(payload, reply) {
 
 function shutdown(signal) {
   logger.info('shutting down', { signal })
+  store.flush()
   session?.close()
   bus.close()
   process.exit(0)

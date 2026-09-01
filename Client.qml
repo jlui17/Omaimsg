@@ -144,16 +144,15 @@ Item {
     return true
   }
 
-  // The daemon owns unread counts but sends no frame in reply to `read`, so the
-  // badge would stay stale until the next push. Clear the local mirror too.
+  // The `read` frame is answered with a `state` frame, which carries the new
+  // total, so nothing here recomputes it. The chat's own count is what no frame
+  // covers until the next list arrives, so only that row is cleared locally.
   function markRead(chatGuid) {
     if (!request({ t: "read", chatGuid: chatGuid })) return false
     var list = (root.chats || []).slice()
     for (var i = 0; i < list.length; i++) {
       if (!list[i] || list[i].guid !== chatGuid) continue
-      var cleared = Object.assign({}, list[i], { unread: 0 })
-      root.unread = Math.max(0, root.unread - (list[i].unread || 0))
-      list[i] = cleared
+      list[i] = Object.assign({}, list[i], { unread: 0 })
       root.setChats(list)
       break
     }

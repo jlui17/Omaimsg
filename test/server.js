@@ -166,6 +166,20 @@ const server = createServer(async (req, res) => {
       return
     }
 
+    // What the Mac reading a chat leaves in chat.db, with no socket event: the
+    // daemon learns it only by scanning again, which is what a restart does.
+    if (req.method === 'POST' && url.pathname === '/__test/stamp-read') {
+      const { chatGuid } = await readBody(req)
+      const list = messages.get(chatGuid)
+      if (!list) {
+        sendJson(res, 404, { status: 404, message: 'Chat does not exist' })
+        return
+      }
+      for (const message of list) if (!message.isFromMe && !message.dateRead) message.dateRead = Date.now()
+      sendJson(res, 200, envelope({ chatGuid }))
+      return
+    }
+
     if (req.method === 'POST' && url.pathname === '/__test/omit-last-message') {
       const { chatGuid } = await readBody(req)
       lastMessageOmitted.add(chatGuid)
@@ -193,6 +207,11 @@ const server = createServer(async (req, res) => {
         return
       }
       const message = buildMessage({ chat, text, fromMe: false, ts: Date.now() })
+      // A message that just arrived has not been read. buildMessage stamps a
+      // read date on every inbound message so the canned history looks settled,
+      // which is wrong for one landing now -- and it is what a daemon re-deriving
+      // unread after a restart reads back.
+      message.dateRead = null
       list.push(message)
       chat.lastMessage = message
       sendJson(res, 200, envelope(message))

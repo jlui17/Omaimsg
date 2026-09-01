@@ -1,4 +1,4 @@
-// Canned BlueBubbles-shaped data: 5 chats, 10-30 messages each. Shapes match
+// Canned BlueBubbles-shaped data: 9 chats, 10-30 messages each. Shapes match
 // what's verified from the Postman collection and server source (see
 // daemon/lib/bluebubbles.js's header comment for the citations).
 
@@ -24,8 +24,17 @@ const CHAT_DEFS = [
   { guid: 'SMS;-;753310', displayName: '', participant: '753310' },
   // A group with no name set: renders as joined participant first names, not
   // a single member's name.
-  { guid: 'iMessage;+;chat1122334455', displayName: '', participants: ['+15551230003', '+15551230004'] }
+  { guid: 'iMessage;+;chat1122334455', displayName: '', participants: ['+15551230003', '+15551230004'] },
+  // Two chats carrying Apple's own read boundary. The first is the live bug:
+  // read on a phone, so the Mac never stamped a read date on its tail, and only
+  // the boundary says it has been seen.
+  { guid: 'iMessage;-;+15551230009', displayName: '', participant: '+15551230009' },
+  { guid: 'iMessage;-;+15551230010', displayName: '', participant: '+15551230010' }
 ]
+
+// What the mock serves as the chat list, so smoke.js counts chats without
+// holding a second copy of the number.
+export const CHAT_COUNT = CHAT_DEFS.length
 
 // Alex and Jordan (the two no-displayName chats above) each have a contact
 // card whose stored number is formatted differently from the E.164-ish chat
@@ -98,6 +107,14 @@ export const UNREACHABLE_TEST = { guid: CHAT_DEFS[2].guid }
 // recorded a read on: unknowable, so it must seed as zero rather than as one
 // more unread.
 export const NEVER_TRACKED_TEST = { guid: CHAT_DEFS[4].guid }
+// Apple's boundary sits at the newest message, so the chat is read -- while its
+// tail carries no read dates at all, which is what the older signal misreads as
+// unread. Reading on an iPhone leaves exactly this state on the Mac.
+export const SEEN_THROUGH_TEST = { guid: CHAT_DEFS[7].guid, trailing: 3 }
+// Apple's boundary sits partway back through a tail the Mac stamped no read
+// dates on, so the two signals disagree: the dateRead run says the whole tail
+// is unread and the boundary says only part of it is. The shorter answer wins.
+export const BOUNDARY_UNREAD_TEST = { guid: CHAT_DEFS[8].guid, unread: 2, tail: 4 }
 export const ATTACHMENT_TEST = { guid: 'MOCK-ATTACHMENT-1', mimeType: 'image/png', transferName: 'photo.png', width: 750, height: 1000 }
 export const ATTACHMENT_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -173,6 +190,9 @@ export function buildStore() {
       isArchived: false,
       displayName: def.displayName,
       participants: buildParticipants(def),
+      // Present on every chat, carrying lastSeenMessageGuid on only some, the
+      // way a real server answers: measured, roughly a quarter of chats have it.
+      properties: [{ shouldForceToSMS: false }],
       lastMessage: null
     }
 
@@ -194,8 +214,29 @@ export function buildStore() {
 
   seedUnreadTail(chats, messages)
   clearReadHistory(chats, messages)
+  boundaryTail(chats, messages, SEEN_THROUGH_TEST.guid, SEEN_THROUGH_TEST.trailing, 0)
+  boundaryTail(chats, messages, BOUNDARY_UNREAD_TEST.guid, BOUNDARY_UNREAD_TEST.tail, BOUNDARY_UNREAD_TEST.unread)
+  undatedInRun(messages, BOUNDARY_UNREAD_TEST.guid, BOUNDARY_UNREAD_TEST.unread)
 
   return { chats, messages }
+}
+
+// The shape a chat read on a phone leaves on the Mac: the older messages keep
+// their read dates, the tail has none, and Apple's boundary is planted `unread`
+// messages back from the newest. The dateRead signal therefore calls the whole
+// tail unread and the boundary is what shortens it -- to nothing at all when
+// `unread` is 0 and the boundary is the newest message itself.
+function boundaryTail(chats, messages, guid, trailing, unread) {
+  const chat = chats.get(guid)
+  const list = messages.get(guid)
+  const base = Date.now() - (trailing + 1) * 60 * 1000
+  for (let i = 0; i < trailing; i++) {
+    const message = buildMessage({ chat, text: `tail ${i + 1}`, fromMe: false, ts: base + (i + 1) * 60 * 1000 })
+    message.dateRead = null
+    list.push(message)
+  }
+  chat.lastMessage = list[list.length - 1]
+  chat.properties[0].lastSeenMessageGuid = list[list.length - 1 - unread].guid
 }
 
 // Deterministic tail for SEED_UNREAD_TEST: one read inbound message (which is
@@ -224,6 +265,18 @@ function clearReadHistory(chats, messages) {
   trailing.dateRead = null
   list.push(trailing)
   chat.lastMessage = trailing
+}
+
+// BlueBubbles serves messages with no dateCreated -- the daemon's own
+// normalizer falls back to dateDelivered for exactly that. One such message
+// inside an unread run is what proves the run does the same: a raw undefined in
+// there makes the read boundary derived from it NaN, and the chat can then
+// never be marked read.
+function undatedInRun(messages, guid, unread) {
+  const list = messages.get(guid)
+  const message = list[list.length - unread]
+  message.dateDelivered = message.dateCreated
+  delete message.dateCreated
 }
 
 export { buildMessage, nextRowId, guid as newGuid, BANK }

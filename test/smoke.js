@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { instancePaths } from '../daemon/lib/paths.js'
-import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, ORPHANED_TEST, SEED_UNREAD_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT, UNREACHABLE_TEST } from './data.js'
+import { ATTACHMENT_PNG, ATTACHMENT_PNG_FULL, ATTACHMENT_TEST, ATTACHMENT_TEST_CHAT, BOUNDARY_UNREAD_TEST, CHAT_COUNT, CONTACT_TEST_CHATS, NEVER_TRACKED_TEST, ORPHANED_TEST, SEED_UNREAD_TEST, SEEN_THROUGH_TEST, SHORTCODE_TEST_CHAT, UNNAMED_GROUP_TEST_CHAT, UNREACHABLE_TEST } from './data.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -28,7 +28,7 @@ const PLUGIN_ID = 'io.omaimsg'
 const sandbox = { XDG_RUNTIME_DIR: runtimeDir, XDG_STATE_HOME: stateHome, XDG_CACHE_HOME: cacheHome }
 // Where the daemon under test will put things, asked of the same function it
 // asks, so this file holds no second copy of the naming rules.
-const { socketPath, pinsPath: pinsFilePath } = instancePaths(PLUGIN_ID, sandbox)
+const { socketPath, pinsPath: pinsFilePath, readStatePath: readStateFilePath, cachePath: cacheFilePath } = instancePaths(PLUGIN_ID, sandbox)
 
 const failures = []
 function report(step, cond, detail) {
@@ -206,6 +206,66 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// The startup scan races the first `chats` request, so an unread assertion on a
+// freshly started daemon has to wait for the seed rather than read whichever
+// list arrives first. Returns the last list seen either way, so a chat that is
+// meant to stay at zero is reported against a settled frame.
+async function settledUnread(client, chatGuid, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs
+  let frame = await settledChats(client, { limit: 0 })
+  while (Date.now() < deadline) {
+    if (frame.chats.some((c) => (c.unread || 0) > 0)) break
+    await sleep(200)
+    frame = await settledChats(client, { limit: 0 })
+  }
+  return { frame, chat: frame.chats.find((c) => c.guid === chatGuid) }
+}
+
+async function startDaemon() {
+  const child = trackSpawn(
+    spawn('node', ['daemon/index.js'], {
+      cwd: repoRoot,
+      // A page size (3) far smaller than the canned chat list forces every
+      // `chats` command through the daemon's multi-page fetch for the whole
+      // run -- the strongest regression net for the pagination fix.
+      env: {
+        ...process.env,
+        OMAIMSG_CONFIG: configPath,
+        OMAIMSG_PLUGIN_ID: PLUGIN_ID,
+        ...sandbox,
+        OMAIMSG_CHAT_PAGE_SIZE: '3'
+      },
+      stdio: ['ignore', 'ignore', 'inherit']
+    }),
+    'daemon'
+  )
+  await waitFileExists(socketPath, 5000)
+  return child
+}
+
+// Every persistence assertion is the same shape: change what is on disk, take
+// the daemon all the way down, ask again. `before` runs while nothing holds the
+// files. `connected` is opt-out for the cache timings, which measure the first
+// reply and must not spend it on a handshake.
+async function restartDaemon(client, daemon, { before, connected = true } = {}) {
+  client.close()
+  await stopDaemon(daemon)
+  if (before) before()
+  const nextDaemon = await startDaemon()
+  const nextClient = await connectClient(socketPath)
+  if (connected) await waitForConnected(nextClient)
+  return { daemon: nextDaemon, client: nextClient }
+}
+
+// Read state is only interesting across a restart, and the daemon holds the
+// socket for its lifetime, so the suite has to take one all the way down.
+function stopDaemon(child) {
+  return new Promise((resolve) => {
+    child.once('exit', () => resolve())
+    child.kill('SIGTERM')
+  })
+}
+
 // Harness-only endpoints on the mock (test/server.js), not BlueBubbles routes.
 async function mockControl(route, body) {
   const res = await fetch(`http://localhost:${PORT}/__test/${route}?password=${PASSWORD}`, {
@@ -274,26 +334,9 @@ async function main() {
 
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
 
-  trackSpawn(
-    spawn('node', ['daemon/index.js'], {
-      cwd: repoRoot,
-      // A page size (3) far smaller than the 7 canned chats forces every
-      // `chats` command through the daemon's multi-page fetch for the whole
-      // run -- the strongest regression net for the pagination fix.
-      env: {
-        ...process.env,
-        OMAIMSG_CONFIG: configPath,
-        OMAIMSG_PLUGIN_ID: PLUGIN_ID,
-        ...sandbox,
-        OMAIMSG_CHAT_PAGE_SIZE: '3'
-      },
-      stdio: ['ignore', 'ignore', 'inherit']
-    }),
-    'daemon'
-  )
-  await waitFileExists(socketPath, 5000)
+  let daemon = await startDaemon()
 
-  const client = await connectClient(socketPath)
+  let client = await connectClient(socketPath)
 
   const stateFrame = await waitForConnected(client)
   report('hello -> state connected', stateFrame.connection === 'connected', JSON.stringify(stateFrame))
@@ -312,7 +355,7 @@ async function main() {
   const firstChatsFrame = await client.waitFor((f) => f.t === 'chats')
   report(
     'chats -> a push before the first request is not served as the list',
-    firstChatsFrame.chats?.length === 7,
+    firstChatsFrame.chats?.length === CHAT_COUNT,
     `first frame carried ${firstChatsFrame.chats?.length} chats`
   )
   let chatsFrame = firstChatsFrame
@@ -321,7 +364,7 @@ async function main() {
   } catch {
     // One frame was the whole answer.
   }
-  report('chats -> 7 chats', chatsFrame.chats?.length === 7, `got ${chatsFrame.chats?.length}`)
+  report(`chats -> ${CHAT_COUNT} chats`, chatsFrame.chats?.length === CHAT_COUNT, `got ${chatsFrame.chats?.length}`)
 
   // Seeding from the server: the daemon scans at startup and the count attaches
   // to the chat list when it lands. The scan races the first request, so poll.
@@ -345,6 +388,32 @@ async function main() {
     `got ${neverTracked?.unread}`
   )
 
+  // The live bug: read on a phone, so the Mac stamped no read date on the tail
+  // and only Apple's own boundary says the chat has been seen. Counting the
+  // unstamped run instead is what resurrects an unread that never goes away.
+  const seenThrough = seeded?.chats.find((c) => c.guid === SEEN_THROUGH_TEST.guid)
+  report(
+    'unread -> a chat Apple reports seen through its newest message is zero',
+    (seenThrough?.unread || 0) === 0,
+    `got ${seenThrough?.unread}, and its tail is ${SEEN_THROUGH_TEST.trailing} messages the Mac never stamped`
+  )
+
+  const boundaryChat = seeded?.chats.find((c) => c.guid === BOUNDARY_UNREAD_TEST.guid)
+  report(
+    'unread -> the run counted is the one newer than Apple\'s boundary',
+    (boundaryChat?.unread || 0) === BOUNDARY_UNREAD_TEST.unread,
+    `got ${boundaryChat?.unread}, wanted ${BOUNDARY_UNREAD_TEST.unread}`
+  )
+
+  // Two chats hold unread here (SEED_UNREAD_TEST's 2 and BOUNDARY_UNREAD_TEST's
+  // 2), so a state frame counting messages would say 4.
+  const unreadChatCount = seeded?.chats.filter((c) => (c.unread || 0) > 0).length
+  report(
+    'state.unread -> counts chats with unread, not messages',
+    seeded?.unread === unreadChatCount && unreadChatCount > 0,
+    `frame said ${seeded?.unread}, ${unreadChatCount} chats carry unread`
+  )
+
   // The Mac reporting the chat read is what clears it, no `read` frame from us.
   await mockControl('read-status', { chatGuid: SEED_UNREAD_TEST.guid })
   let clearedFrame = null
@@ -360,6 +429,17 @@ async function main() {
     'chat-read-status-changed -> the chat clears without a read frame',
     !!clearedFrame,
     'no chats frame arrived with the chat cleared'
+  )
+
+  // The boundary only moves forward, so the poller re-reporting a chat it
+  // already reported is not news and must not push the list out again.
+  await quiesceChats(client)
+  await mockControl('read-status', { chatGuid: SEED_UNREAD_TEST.guid })
+  const repeatBroadcast = await client.waitFor((f) => f.t === 'chats', 1000).catch(() => null)
+  report(
+    'chat-read-status-changed -> a repeat for the same chat broadcasts nothing',
+    repeatBroadcast === null,
+    JSON.stringify(repeatBroadcast)
   )
   // The seed left an unread behind. Clear it so the unread assertions further
   // down measure their own pushes and nothing else.
@@ -654,7 +734,11 @@ async function main() {
   )
 
   const stateAfterRead = await settledRead(client, chatGuid)
-  report('read -> total unread clears', stateAfterRead.unread === 0, `unread=${stateAfterRead.unread}`)
+  report(
+    'read -> the chat stops counting toward the total',
+    stateAfterRead.unread === unreadBaseline,
+    `unread=${stateAfterRead.unread} baseline=${unreadBaseline}`
+  )
 
   const chatsAfterRead = await settledChats(client)
   const readChat = chatsAfterRead.chats.find((c) => c.guid === chatGuid)
@@ -746,7 +830,7 @@ async function main() {
   const allChatsFrame = await settledChats(client, { limit: 40 })
   report(
     'pagination: no chats dropped across pages',
-    allChatsFrame.chats.length === 7,
+    allChatsFrame.chats.length === CHAT_COUNT,
     `got ${allChatsFrame.chats.length}`
   )
 
@@ -754,7 +838,7 @@ async function main() {
   const uncappedFrame = await settledChats(client, { limit: 0 })
   report(
     'limit 0 -> the whole list, where a numeric limit caps it',
-    cappedFrame.chats.length === 3 && uncappedFrame.chats.length === 7,
+    cappedFrame.chats.length === 3 && uncappedFrame.chats.length === CHAT_COUNT,
     `capped ${cappedFrame.chats.length}, uncapped ${uncappedFrame.chats.length}`
   )
 
@@ -856,6 +940,159 @@ async function main() {
   client.send({ t: 'ping' })
   const pongFrame = await client.waitFor((f) => f.t === 'pong')
   report('ping -> pong', !!pongFrame)
+
+  // Read state across a restart. The server's answer never changes, so a
+  // daemon that re-derives unread and nothing else hands back what was already
+  // dismissed -- the live bug this is here to pin.
+  // A message arriving after Apple's boundary is unread again, and this chat is
+  // never read here, so it is what proves the persisted boundary silences only
+  // the chats it names.
+  await mockControl('push-message', { chatGuid: SEEN_THROUGH_TEST.guid, text: 'arrived after you looked' })
+  await client.waitFor((f) => f.t === 'message' && f.chatGuid === SEEN_THROUGH_TEST.guid)
+
+  await settledRead(client, BOUNDARY_UNREAD_TEST.guid)
+  const readStateFile = JSON.parse(readFileSync(readStateFilePath, 'utf8'))
+  report(
+    'read -> the boundary is persisted, versioned, under XDG_STATE_HOME',
+    readStateFile.version === 1 && readStateFile.opened?.[BOUNDARY_UNREAD_TEST.guid] > 0,
+    JSON.stringify(readStateFile)
+  )
+
+  ;({ daemon, client } = await restartDaemon(client, daemon))
+  const afterRestart = await settledUnread(client, BOUNDARY_UNREAD_TEST.guid)
+  report(
+    'read survives a daemon restart, so a dismissed chat stays dismissed',
+    (afterRestart.chat?.unread || 0) === 0,
+    `got ${afterRestart.chat?.unread} after restart`
+  )
+  report(
+    'a chat never read here still seeds after a restart, so the boundary is not a blanket mute',
+    (afterRestart.frame.chats.find((c) => c.guid === SEEN_THROUGH_TEST.guid)?.unread || 0) === 1,
+    JSON.stringify(afterRestart.frame.chats.find((c) => c.guid === SEEN_THROUGH_TEST.guid))
+  )
+
+  // The other direction, and the reason no unread run is ever cached: the Mac
+  // reads the chat with nothing on the socket to say so. Only the next scan can
+  // tell us, so a run held over from the last run would outrank it forever.
+  await mockControl('stamp-read', { chatGuid: SEEN_THROUGH_TEST.guid })
+  ;({ daemon, client } = await restartDaemon(client, daemon))
+  const afterMacRead = await settledUnread(client, SEEN_THROUGH_TEST.guid)
+  report(
+    'a restart re-derives Apple\'s half rather than reusing the last run',
+    (afterMacRead.chat?.unread || 0) === 0,
+    `got ${afterMacRead.chat?.unread} for a chat the Mac read while we were down`
+  )
+
+  // A file this daemon cannot read is discarded, not fatal, and not silently
+  // trusted: the chat comes back unread rather than the daemon refusing to start.
+  // The planted file carries a boundary far enough ahead to silence the chat if
+  // it were obeyed, so the assertion distinguishes "discarded" from "read and
+  // empty".
+  ;({ daemon, client } = await restartDaemon(client, daemon, {
+    before: () => writeFileSync(readStateFilePath, JSON.stringify({ version: 99, opened: { [BOUNDARY_UNREAD_TEST.guid]: Date.now() + 60_000 } }))
+  }))
+  const afterUnknownVersion = await settledUnread(client, BOUNDARY_UNREAD_TEST.guid)
+  report(
+    'an unknown-version read-state file is discarded, not obeyed and not fatal',
+    (afterUnknownVersion.chat?.unread || 0) === BOUNDARY_UNREAD_TEST.unread,
+    `got ${afterUnknownVersion.chat?.unread}, wanted the chat unread again`
+  )
+
+  ;({ daemon, client } = await restartDaemon(client, daemon, {
+    before: () => writeFileSync(readStateFilePath, 'not json at all')
+  }))
+  const afterCorrupt = await settledUnread(client, BOUNDARY_UNREAD_TEST.guid)
+  report(
+    'a corrupt read-state file is discarded, not fatal',
+    (afterCorrupt.chat?.unread || 0) === BOUNDARY_UNREAD_TEST.unread,
+    `got ${afterCorrupt.chat?.unread}, wanted the chat unread again`
+  )
+
+  // The cache is a latency win, so what it has to prove is that a boot answers
+  // before BlueBubbles does. A chat fetch slow enough to be unmistakable is
+  // what separates a cached reply from a fetched one.
+  report(
+    'the cache is written under XDG_CACHE_HOME, versioned, and leaves no temp file behind',
+    existsSync(cacheFilePath) && JSON.parse(readFileSync(cacheFilePath, 'utf8')).version === 1 && !existsSync(`${cacheFilePath}.tmp`),
+    cacheFilePath
+  )
+
+  // Warm this thread so the restart below has one to serve. The shutdown flush
+  // is what gets it to disk ahead of the debounce.
+  client.send({ t: 'messages', chatGuid: BOUNDARY_UNREAD_TEST.guid })
+  await client.waitFor((f) => f.t === 'messages' && f.chatGuid === BOUNDARY_UNREAD_TEST.guid)
+
+  ;({ daemon, client } = await restartDaemon(client, daemon, { connected: false }))
+  await mockControl('chat-delay', { ms: 1500 })
+  await quiesceChats(client)
+  client.send({ t: 'chats', limit: 0 })
+  const warmFrame = await client.waitFor((f) => f.t === 'chats', 700).catch(() => null)
+  report(
+    'a warm start serves the whole chat list before BlueBubbles answers',
+    warmFrame?.chats?.length === CHAT_COUNT,
+    warmFrame === null ? 'no frame inside the fetch delay' : `got ${warmFrame.chats.length} chats`
+  )
+
+  // A thread the previous daemon had open comes back the same way.
+  await mockControl('message-delay', { ms: 1500 })
+  client.send({ t: 'messages', chatGuid: BOUNDARY_UNREAD_TEST.guid })
+  const warmThread = await client.waitFor((f) => f.t === 'messages' && f.chatGuid === BOUNDARY_UNREAD_TEST.guid, 700).catch(() => null)
+  report(
+    'a warm start serves an already-opened thread before BlueBubbles answers',
+    (warmThread?.messages?.length || 0) > 0,
+    warmThread === null ? 'no frame inside the fetch delay' : `got ${warmThread.messages.length} messages`
+  )
+
+  // The same request with the cache gone: nothing can be served until the
+  // delayed fetch lands, which is what proves the answers above came from disk.
+  // Only the chat fetch stays slow; the startup scan reads messages too, and
+  // delaying those as well would push the cold answer past any sane timeout.
+  await mockControl('message-delay', { ms: 0 })
+  ;({ daemon, client } = await restartDaemon(client, daemon, {
+    before: () => rmSync(cacheFilePath, { force: true }),
+    connected: false
+  }))
+  client.send({ t: 'chats', limit: 0 })
+  const coldEarly = await client.waitFor((f) => f.t === 'chats', 700).catch(() => null)
+  report(
+    'a cold start has nothing to serve until the fetch lands',
+    coldEarly === null,
+    JSON.stringify(coldEarly)
+  )
+  const coldFrame = await client.waitFor((f) => f.t === 'chats', 20000)
+  report(
+    'a cold start still yields the whole list, only slower',
+    coldFrame.chats.length === CHAT_COUNT,
+    `got ${coldFrame.chats.length}`
+  )
+  const coldRead = coldFrame.chats.find((c) => c.guid === BOUNDARY_UNREAD_TEST.guid)
+  report(
+    'deleting the cache loses no read state',
+    (coldRead?.unread || 0) === BOUNDARY_UNREAD_TEST.unread,
+    `got ${coldRead?.unread}, and the read-state file is the corrupt one planted above`
+  )
+  await mockControl('chat-delay', { ms: 0 })
+
+  // An unreadable cache is a cold start, never a crash and never obeyed.
+  ;({ daemon, client } = await restartDaemon(client, daemon, {
+    before: () => writeFileSync(cacheFilePath, JSON.stringify({ version: 99, chats: [{ guid: 'ghost', name: 'ghost', isGroup: false, lastMessage: null }], threads: {} }))
+  }))
+  const afterBadCache = await settledChats(client, { limit: 0 })
+  report(
+    'an unknown-version cache is discarded, not obeyed and not fatal',
+    afterBadCache.chats.length === CHAT_COUNT && !afterBadCache.chats.some((c) => c.guid === 'ghost'),
+    `got ${afterBadCache.chats.length} chats`
+  )
+
+  ;({ daemon, client } = await restartDaemon(client, daemon, {
+    before: () => writeFileSync(cacheFilePath, 'not json at all')
+  }))
+  const afterCorruptCache = await settledChats(client, { limit: 0 })
+  report(
+    'a corrupt cache is discarded, not fatal',
+    afterCorruptCache.chats.length === CHAT_COUNT,
+    `got ${afterCorruptCache.chats.length} chats`
+  )
 
   client.close()
 }

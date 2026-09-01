@@ -21,7 +21,9 @@ test('every state path is named by the id, with no id excepted', () => {
     const paths = instancePaths(id, ENV)
     assert.equal(paths.configPath, `/h/.config/${id}/config.json`)
     assert.equal(paths.pinsPath, `/h/.local/state/${id}/pins.json`)
+    assert.equal(paths.readStatePath, `/h/.local/state/${id}/read-state.json`)
     assert.equal(paths.attachmentsDir, `/h/.cache/${id}/attachments`)
+    assert.equal(paths.cachePath, `/h/.cache/${id}/cache.json`)
   }
 })
 

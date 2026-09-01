@@ -90,7 +90,7 @@ instance_paths() {
     const [entry, id] = process.argv.slice(1)
     const { instancePaths } = await import(entry)
     const p = instancePaths(id)
-    console.log([p.configPath, p.pinsPath, p.attachmentsDir, p.socketPath].join("\n"))
+    console.log([p.configPath, p.pinsPath, p.readStatePath, p.attachmentsDir, p.cachePath, p.socketPath].join("\n"))
   ' "$from/daemon/lib/paths.js" "$PLUGIN_ID"
 }
 
@@ -170,11 +170,12 @@ fi
 # use and points that entry at the variant's directory.
 command -v omarchy-shell >/dev/null && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
+# An id that differs from the source tree's makes this a variant. The reverse
+# does not follow: reinstalling a variant from inside its own copy reads a
+# manifest already rewritten to that id, so the two match and only the stamp the
+# last install wrote still knows what this is.
 variant="$prev_variant"
-if [[ -n $target_id ]]; then
-  variant=false
-  [[ $PLUGIN_ID != "$SOURCE_ID" ]] && variant=true
-fi
+[[ -n $target_id && $PLUGIN_ID != "$SOURCE_ID" ]] && variant=true
 
 # Only when the source is the repo root itself. An installed copy has no .git of
 # its own, and a bare rev-parse walks up until it finds one -- stamping a

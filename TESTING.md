@@ -49,7 +49,7 @@ what the widget renders and how the panel answers the keyboard:
   its id beside the glyph, keeps it when a count arrives, and names its branch and sha in the panel
   header. Both staged installs carry a `.deploy.json`, so the checks pin the recorded flag rather
   than whether the file exists.
-- **The unread badge**: bare glyph at zero, the count beside the glyph, the `99+` clamp, the tooltip.
+- **The unread badge**: bare glyph at zero, the conversation count beside the glyph, the `99+` clamp, the tooltip.
 - **The chat list**: the daemon's order survives into what renders, and the empty state clears.
 - **Pinning**: a pinned chat renders first, unpinning restores the recency order.
 - **Keyboard**: `j`/`k` walk the chat list, `l` opens the chat under the cursor.

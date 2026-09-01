@@ -145,7 +145,7 @@ BarWidget {
     tooltipText: {
       var name = root.variant ? "Omaimsg " + root.pluginId : "Omaimsg"
       if (!client.linkUp) return client.daemonStarting ? name + " · starting daemon" : name + " · daemon offline"
-      if (root.unread > 0) return name + " · " + root.unread + " unread"
+      if (root.unread > 0) return name + " · " + root.unread + " unread conversation" + (root.unread === 1 ? "" : "s")
       return name
     }
     onPressed: function (buttonCode) {

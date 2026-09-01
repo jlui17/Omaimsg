@@ -15,7 +15,9 @@ export function instancePaths(pluginId, env = process.env) {
     configPath: env.OMAIMSG_CONFIG
       || join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), id, 'config.json'),
     pinsPath: join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), id, 'pins.json'),
-    attachmentsDir: join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), id, 'attachments')
+    readStatePath: join(env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), id, 'read-state.json'),
+    attachmentsDir: join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), id, 'attachments'),
+    cachePath: join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), id, 'cache.json')
   }
 }
 
@@ -26,6 +28,8 @@ const resolved = instancePaths(pluginId)
 export const socketPath = resolved.socketPath
 export const configPath = resolved.configPath
 export const pinsPath = resolved.pinsPath
+export const readStatePath = resolved.readStatePath
+export const cachePath = resolved.cachePath
 
 // base64url rather than the raw guid: BlueBubbles attachment guids can carry
 // characters that are unsafe as filenames, and the encoding stays collision-free.
