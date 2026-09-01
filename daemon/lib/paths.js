@@ -1,7 +1,10 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 
-const CANONICAL_ID = 'io.omaimsg'
+// The install every rule is written against. Exported because install.sh asks
+// for it rather than spelling the id a second time: whether an install is a
+// variant is exactly "its id is not this one".
+export const CANONICAL_ID = 'io.omaimsg'
 
 // The plugin passes its manifest id through verbatim and every path is named
 // from it directly, with no exception for any id, so two installs cannot land

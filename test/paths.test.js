@@ -3,7 +3,7 @@
 // are pinned.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { instancePaths } from '../daemon/lib/paths.js'
+import { CANONICAL_ID, instancePaths } from '../daemon/lib/paths.js'
 
 const ENV = {
   XDG_RUNTIME_DIR: '/run/user/1000',
@@ -59,4 +59,12 @@ test('an attachment is named by base64url of its guid, inside the id-named cache
   const { attachmentPath } = instancePaths('io.omaimsg.b', ENV)
   assert.equal(attachmentPath('MOCK-1'), '/h/.cache/io.omaimsg.b/attachments/TU9DSy0x')
   assert.equal(attachmentPath('MOCK-1', '.full'), '/h/.cache/io.omaimsg.b/attachments/TU9DSy0x.full')
+})
+
+// install.sh reads this to decide whether an install is a variant, so it is a
+// contract with the installer rather than a private constant. Comparing against
+// the source tree's id instead answered wrong once that tree was a variant.
+test('the canonical id is exported, and is the id an unnamed install takes', () => {
+  assert.equal(CANONICAL_ID, 'io.omaimsg')
+  assert.equal(instancePaths(undefined, ENV).configPath, `/h/.config/${CANONICAL_ID}/config.json`)
 })

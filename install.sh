@@ -94,6 +94,17 @@ instance_paths() {
   ' "$from/daemon/lib/paths.js" "$PLUGIN_ID"
 }
 
+# The canonical id belongs with the other id rules in the daemon, so ask for it
+# rather than spelling it here as well. Read from the installed copy, which by
+# the time this is called is the tree being stamped.
+canonical_id() {
+  node --input-type=module -e '
+    const [entry] = process.argv.slice(1)
+    const { CANONICAL_ID } = await import(entry)
+    console.log(CANONICAL_ID)
+  ' "$PLUGIN_DIR/daemon/lib/paths.js"
+}
+
 if (( uninstall )); then
   mapfile -t paths < <(instance_paths)
   config_path="${paths[0]}"
@@ -133,19 +144,18 @@ if (( uninstall )); then
   exit 0
 fi
 
-# A re-install from the installed copy has neither an id to compare nor a .git to
-# read, so the stamp already there is the only source for what this build is; the
-# rsync excludes it precisely so it survives to be read. Read before anything is
-# copied, so a stamp we cannot use stops the install while it is still a no-op.
-prev_variant=false prev_branch="" prev_sha=""
+# A re-install from the installed copy has no .git to read, so the stamp already
+# there is the only source for which build this is; the rsync excludes it
+# precisely so it survives to be read. Read before anything is copied, so a stamp
+# we cannot use stops the install while it is still a no-op.
+prev_branch="" prev_sha=""
 if [[ -f $PLUGIN_DIR/.deploy.json ]]; then
   mapfile -t prev < <(
-    jq -r 'if .variant then "true" else "false" end, (.branch // ""), (.sha // "")' \
-      "$PLUGIN_DIR/.deploy.json" 2>/dev/null
+    jq -r '(.branch // ""), (.sha // "")' "$PLUGIN_DIR/.deploy.json" 2>/dev/null
   )
-  (( ${#prev[@]} == 3 )) ||
-    die "cannot read $PLUGIN_DIR/.deploy.json; delete it and re-run, naming the id if this is a variant"
-  prev_variant="${prev[0]}" prev_branch="${prev[1]}" prev_sha="${prev[2]}"
+  (( ${#prev[@]} == 2 )) ||
+    die "cannot read $PLUGIN_DIR/.deploy.json; delete it and re-run"
+  prev_branch="${prev[0]}" prev_sha="${prev[1]}"
 fi
 
 if [[ $SOURCE_DIR != "$PLUGIN_DIR" ]]; then
@@ -170,12 +180,20 @@ fi
 # use and points that entry at the variant's directory.
 command -v omarchy-shell >/dev/null && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
-# An id that differs from the source tree's makes this a variant. The reverse
-# does not follow: reinstalling a variant from inside its own copy reads a
-# manifest already rewritten to that id, so the two match and only the stamp the
-# last install wrote still knows what this is.
-variant="$prev_variant"
-[[ -n $target_id && $PLUGIN_ID != "$SOURCE_ID" ]] && variant=true
+command -v mise >/dev/null || die "mise is required (Omarchy ships it)"
+say "Installing the pinned toolchain"
+mise install --cd "$PLUGIN_DIR"
+
+say "Installing the daemon's dependency"
+mise exec --cd "$PLUGIN_DIR" -- npm ci --omit=dev --workspace daemon --prefix "$PLUGIN_DIR"
+
+# An install is a variant when its id is not the canonical one, and nothing
+# else: asking whether it differs from the SOURCE tree's id answered wrong the
+# moment that tree was itself a variant, in both directions. Stamped after the
+# toolchain rather than before, so a run that dies half way leaves the stamp
+# naming the build that is actually installed.
+variant=false
+[[ $PLUGIN_ID != "$(canonical_id)" ]] && variant=true
 
 # Only when the source is the repo root itself. An installed copy has no .git of
 # its own, and a bare rev-parse walks up until it finds one -- stamping a
@@ -194,13 +212,6 @@ jq -n --argjson variant "$variant" --arg branch "$branch" --arg sha "$sha" \
   --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{variant: $variant, branch: $branch, sha: $sha, at: $at}' >"$tmp"
 mv "$tmp" "$PLUGIN_DIR/.deploy.json"
-
-command -v mise >/dev/null || die "mise is required (Omarchy ships it)"
-say "Installing the pinned toolchain"
-mise install --cd "$PLUGIN_DIR"
-
-say "Installing the daemon's dependency"
-mise exec --cd "$PLUGIN_DIR" -- npm ci --omit=dev --workspace daemon --prefix "$PLUGIN_DIR"
 
 mapfile -t paths < <(instance_paths)
 config_path="${paths[0]}"
