@@ -1,0 +1,16 @@
+[Unit]
+Description=Omaimsg daemon (BlueBubbles bridge for the Omarchy bar), instance %i
+
+[Service]
+# %i is the plugin's manifest id, which is also the directory omarchy installs
+# it into. Passing it through is what keeps this unit's daemon on the same
+# socket and state paths the widget of that id looks for.
+Environment=OMAIMSG_PLUGIN_ID=%i
+ExecStart=@NODE@ %h/.config/omarchy/plugins/%i/daemon/index.js
+Restart=on-failure
+# Exit 3 = another omaimsg daemon already owns the socket; retrying would flap
+# against it forever.
+RestartPreventExitStatus=3
+
+[Install]
+WantedBy=default.target

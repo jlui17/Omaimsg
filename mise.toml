@@ -1,19 +1,19 @@
 [tools]
 node = "24"
-# Pinned because `bun run bundle` produces a committed artifact
-# (daemon/dist/omaimsg-daemon.cjs). Bump deliberately and re-run the bundle.
-bun = "1.4.0"
+# Pinned separately from the node major above, which floats: install.sh resolves
+# dependencies through this npm, so a drifting one would resolve a user's install
+# differently from the checkout the lockfile was written in.
+npm = "11.19.1"
 
 [tasks.setup]
 description = "Provision a fresh checkout or worktree with the dependencies the daemon and test servers need"
-run = "bun install"
+run = "npm ci"
 
 [tasks.test]
-description = "Every check: path derivation, daemon protocol, the committed bundle, then the UI"
+description = "Every check: path derivation, daemon protocol, then the UI"
 run = [
   "mise run test:paths",
   "mise run test:daemon",
-  "mise run test:bundle",
   "mise run test:ui",
 ]
 
@@ -24,10 +24,6 @@ run = "node --test test/paths.test.js"
 [tasks."test:daemon"]
 description = "Daemon protocol end to end over the real Unix socket"
 run = "node test/smoke.js"
-
-[tasks."test:bundle"]
-description = "The same protocol run against the committed daemon bundle"
-run = "OMAIMSG_DAEMON_ENTRY=daemon/dist/omaimsg-daemon.cjs node test/smoke.js"
 
 [tasks."test:ui"]
 description = "Bar widget and panel, rendered in a headless compositor"

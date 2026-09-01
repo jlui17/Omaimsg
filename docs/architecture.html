@@ -241,9 +241,10 @@
     changes in the same commit as the code.</summary>
   <div class="body">
     <p>The wire is simple: one JSON object per line, and a <code>t</code> field saying what
-    kind of frame it is. But the two programs ship separately. The plugin arrives as a git
-    clone, the daemon as a committed bundle, and they can easily be different ages. The doc
-    is the only thing keeping them honest.</p>
+    kind of frame it is. But the two programs run separately. They arrive in one clone, yet the
+    daemon is a long-lived service while the plugin reloads under it, so a shell can easily be
+    talking to a daemon started from an older copy. The doc is the only thing keeping them
+    honest.</p>
     <p>New frame types will get added over time. That's fine. The shape of the wire, and
     this rule, don't move.</p>
     <div class="tell"><span class="h">Something's off if you see</span>
@@ -391,22 +392,25 @@
 
 <details>
   <summary><span class="id" style="color:#e0af68">13</span>
-    Change the daemon, rebuild the bundle, run every check.</summary>
+    Change the daemon, run every check.</summary>
   <div class="body">
-    <p>When someone installs with <code>omarchy plugin add</code>, they get a plain git clone.
-    No build step, no <code>node_modules</code>. So the committed bundle <i>is</i> the daemon
-    people run. Source without a rebuilt bundle means your fix doesn't exist for anyone who
-    installed the normal way.</p>
+    <p>When someone installs with <code>omarchy plugin add</code>, they get a plain git clone:
+    no build step, no <code>node_modules</code>, and nothing from the plugin is ever executed.
+    So the tree ships as source and <code>install.sh</code> is what turns it into a working
+    install &#8212; it resolves the daemon's one dependency from the committed
+    <code>package-lock.json</code>, so an install gets what this checkout got. Nothing here is
+    generated, and nothing generated is committed.</p>
     <p><code>mise run test</code> is the check for any change, and it is three suites. The
-    first pushes every protocol frame through a real Unix socket against a fake BlueBubbles
-    server. The second runs that same suite against the committed bundle, because that is the
-    daemon people actually run. The third boots the real Omarchy shell in a headless
-    compositor and drives the widget and panel, so a QML change is checked by rendering it
-    rather than by checking the protocol underneath it.</p>
+    first pins the rules that turn a plugin id into a state path, in isolation, because two
+    installs sharing one path is the failure nothing else would catch. The second pushes every
+    protocol frame through a real Unix socket against a fake BlueBubbles server. The third
+    boots the real Omarchy shell in a headless compositor and drives the widget and panel, so
+    a QML change is checked by rendering it rather than by checking the protocol underneath
+    it.</p>
     <div class="tell"><span class="h">Something's off if you see</span>
-      a diff touching <code>daemon/</code> without touching
-      <code>daemon/dist/omaimsg-daemon.cjs</code> &#183; a new frame type with nothing in the
-      protocol suite &#183; a QML change checked only by the protocol suite &#183; a new
+      a new dependency under <code>daemon/</code> without a <code>package-lock.json</code> in
+      the same diff &#183; a generated file committed &#183; a new frame type with nothing in
+      the protocol suite &#183; a QML change checked only by the protocol suite &#183; a new
       assertion nobody watched fail first.</div>
   </div>
 </details>
