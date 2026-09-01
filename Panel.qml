@@ -5,13 +5,14 @@ import qs.Ui
 
 // The iMessage surface: chat list and thread view with an inline composer.
 // Loaded by BarWidget.qml, which injects `bar`, `anchorItem`, `hostWidget`,
-// `pluginId`, `settings`, and the shared `client`.
+// `pluginId`, `buildLine`, `settings`, and the shared `client`.
 Panel {
   id: root
   moduleName: root.pluginId
   manageIpc: false
 
   property string pluginId: ""
+  property string buildLine: ""
   property var anchorItem: null
   property var hostWidget: null
   property var client: null
@@ -637,6 +638,18 @@ Panel {
               }
               visible: text.length > 0
               color: root.statusLine.length > 0 ? root.accent : root.secondaryForeground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+
+            // Its own line rather than a third meaning for the one above, which
+            // is where send failures surface and must not be crowded out.
+            Text {
+              width: parent.width
+              text: root.buildLine
+              visible: text.length > 0
+              color: root.secondaryForeground
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight

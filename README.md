@@ -20,7 +20,9 @@ omarchy plugin add https://github.com/jlui17/Omaimsg.git
 `omarchy plugin add` only clones and validates — it never runs anything from a plugin. `install.sh`
 does the rest: installs the daemon's dependency with the pinned npm, writes a config template,
 installs and (re)starts `omaimsg-daemon@io.omaimsg.service`, and adds the widget to the bar. It is
-safe to re-run: a re-install restarts the daemon onto the code it just copied in.
+safe to re-run: a re-install restarts the daemon onto the code it just copied in, and restarts the
+shell so a changed widget is re-instantiated rather than silently ignored. Pass `--no-restart` to
+skip that last step.
 
 It prints the path of the config template it wrote. Fill in your BlueBubbles server URL and
 password (see [Run against a real Mac](#run-against-a-real-mac)), then:
@@ -63,19 +65,28 @@ The plugin dir must be a real copy, not a symlink: the shell's file watcher does
 The manifest `id` is the plugin's identity, and everything else follows from it: the bar entry, the `omarchy-shell` IPC target, the daemon's socket, and the daemon's config, pins, and attachment cache. Install a copy under a different id and it cannot touch the one you use.
 
 ```sh
-rsync -a --delete --exclude .git --exclude node_modules --exclude .worktrees \
-  --exclude .mcp.json --exclude .claude --exclude /test/qsmcp/stage \
-  ./ ~/.config/omarchy/plugins/io.omaimsg.b/
-jq '.id = "io.omaimsg.b"' manifest.json >~/.config/omarchy/plugins/io.omaimsg.b/manifest.json
-~/.config/omarchy/plugins/io.omaimsg.b/install.sh
+./install.sh io.omaimsg.b
 ```
 
-The copy and the id rewrite are by hand because `install.sh` installs the id its own
-`manifest.json` names; rewriting it first is what makes the copy a different install. Everything
-after that — dependency, service instance, config, bar entry — is the same script doing the same
-work for a different id.
+Given an id, `install.sh` installs under it instead of the one the manifest names, rewriting the
+manifest in the copy so the install genuinely is that id. Several at once share one shell restart:
 
-Every state path is named after the id with no exception, so give the copy its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js` rather than the real Mac, or a send from it lands in a real conversation. `omarchy-shell io.omaimsg.b toggle` drives it.
+```sh
+./install.sh io.omaimsg.b --no-restart
+./install.sh io.omaimsg.c --no-restart
+omarchy-restart-shell
+```
+
+**Each one says which build it is.** A variant renders its id beside the glyph (`󰍡 io.omaimsg.b`,
+and `󰍡 io.omaimsg.b · 3` with unread), and its panel header carries the branch and short sha it was
+installed from. The install you actually use renders neither, so a normal install stays quiet.
+
+Both come from `.deploy.json`, which `install.sh` writes into the plugin directory at install time:
+the rsync drops `.git`, so the copy cannot work out its own provenance, and nothing about the build
+can be set by hand in a setting that would later go stale and lie. A variant installed from a tree
+with no git history says `no build stamp` rather than rendering as though it were canonical.
+
+Every state path is named after the id with no exception, so give the copy its own `~/.config/io.omaimsg.b/config.json` pointing at `test/server.js` rather than the real Mac, or a send from it lands in a real conversation. `omarchy-shell io.omaimsg.b toggle` drives it. `./install.sh --uninstall io.omaimsg.b` takes it away again and leaves the others alone.
 
 ## Run against a real Mac
 

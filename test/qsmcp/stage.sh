@@ -37,6 +37,18 @@ rsync -a --exclude .git --exclude node_modules --exclude .worktrees \
 rsync -a "$PLUGIN/" "$VARIANT/"
 jq --arg id "$VARIANT_ID" '.id = $id' "$PLUGIN/manifest.json" >"$VARIANT/manifest.json"
 
+# Both installs get a stamp, so the checks prove the recorded flag is what drives
+# the build line and the id in the bar, not merely whether the file is there.
+# Fixed values rather than this checkout's: the assertions read them back.
+STAMP_BRANCH="stage-branch"
+STAMP_SHA="abc1234"
+stamp() {
+  jq -n --argjson variant "$2" --arg branch "$STAMP_BRANCH" --arg sha "$STAMP_SHA" \
+    '{variant: $variant, branch: $branch, sha: $sha, at: "2026-01-01T00:00:00Z"}' >"$1/.deploy.json"
+}
+stamp "$PLUGIN" false
+stamp "$VARIANT" true
+
 # Declare the types in every directory shell.qml pulls in by relative path.
 # Left to scan those directories itself, quickshell resolves them racily under
 # the probe wrapper: a different type fails to resolve on each boot.
